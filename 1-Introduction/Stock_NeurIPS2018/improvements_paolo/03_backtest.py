@@ -53,7 +53,11 @@ def predict_finrl(algo: str, env: StockTradingEnv, model_dir: Path) -> pd.DataFr
 
 
 def predict_vecnormalize(algo: str, env: StockTradingEnv, model_dir: Path) -> pd.DataFrame:
-    """Manual rollout against a VecNormalize-wrapped env (stats frozen)."""
+    """Manual rollout against a VecNormalize-wrapped env (stats frozen).
+
+    Snapshots the env's asset memory *before* the terminal step triggers
+    DummyVecEnv's automatic reset (which would wipe the memory).
+    """
     AlgoClass = ALGO_REGISTRY[algo]
     model = AlgoClass.load(str(model_dir / f"agent_{algo}.zip"))
 
@@ -62,19 +66,23 @@ def predict_vecnormalize(algo: str, env: StockTradingEnv, model_dir: Path) -> pd
     venv.training = False
     venv.norm_reward = False
 
+    n_steps = len(env.df.index.unique())
     obs = venv.reset()
-    done = False
-    while not done:
+    df_account = None
+    for i in range(n_steps):
         action, _ = model.predict(obs, deterministic=True)
         obs, _, dones, _ = venv.step(action)
-        done = bool(dones[0])
+        if i == n_steps - 2:
+            df_account = venv.env_method("save_asset_memory")[0]
+        if dones[0]:
+            break
 
-    underlying = venv.envs[0]
-    dates = underlying.date_memory
-    values = underlying.asset_memory
-    if len(values) == len(dates) + 1:
-        values = values[1:]
-    return pd.DataFrame({"date": dates, "account_value": values})
+    if df_account is None:
+        raise RuntimeError(
+            f"Backtest for {algo} ended before snapshot was taken; "
+            f"this should not happen with a non-empty trade dataset."
+        )
+    return df_account
 
 
 def compute_mvo_baseline(train_df: pd.DataFrame, trade_df: pd.DataFrame,
