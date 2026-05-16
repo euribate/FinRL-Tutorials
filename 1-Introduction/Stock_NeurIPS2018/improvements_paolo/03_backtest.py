@@ -156,22 +156,22 @@ def main() -> None:
     model_dir   = resolve_path(config, "model_dir")
     results_dir = resolve_path(config, "results_dir")
 
-    normalize      = config["normalization"]["normalize_observations"]
+    obs_mode       = config["normalization"]["obs_mode"]
     initial_amount = config["env"]["initial_amount"]
 
     trade_df = load_csv(data_dir / "trade_data.csv")
     train_df = load_csv(data_dir / "train_data.csv")
 
-    print(f"Mode: {'NORMALIZED' if normalize else 'STANDARD'}")
+    print(f"Mode: obs_mode={obs_mode!r}")
 
     equity = {}
     for algo in enabled_models(config):
         print(f"\nBacktesting {algo.upper()}...")
         env = build_trade_env(config, trade_df)
-        if normalize:
-            df = predict_vecnormalize(algo, env, model_dir)
-        else:
+        if obs_mode == "off":
             df = predict_finrl(algo, env, model_dir)
+        else:
+            df = predict_vecnormalize(algo, env, model_dir)
         df = df.set_index(df.columns[0])
         equity[algo.upper()] = df[df.columns[0]]
 

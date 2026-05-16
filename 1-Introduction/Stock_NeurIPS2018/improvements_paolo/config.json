@@ -30,10 +30,8 @@
   },
 
   "normalization": {
-    "normalize_observations":    false,
-    "normalize_only_indicators": true,
-    "normalize_reward":          false,
-    "clip_obs":                  10.0
+    "obs_mode": "indicators",
+    "clip_obs": 10.0
   },
 
   "models": {

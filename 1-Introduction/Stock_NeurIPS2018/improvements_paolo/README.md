@@ -52,21 +52,19 @@ Mirrors the `env_kwargs` block from the original notebooks. See §4.5 of `../MET
 `turbulence_threshold_train` (commonly `null`) and `turbulence_threshold_trade` (default `70`) are split so you can keep the train env unconstrained while still enforcing the circuit-breaker at backtest time.
 
 ### `normalization`
-The switch behind the two execution paths.
+A single field selects the observation normalization strategy.
 
-| `normalize_observations` | Pipeline behavior |
+| `obs_mode` | Pipeline behavior |
 |---|---|
-| `false` | Original notebook-style flow via FinRL's `DRLAgent`. No state-vector scaling. |
-| `true` | Wraps the env in `VecNormalize` (or `SelectiveVecNormalize`, see below), maintaining running mean/std stats. Stats are saved alongside each model (`vecnormalize_<algo>.pkl`) and reloaded at backtest with `training=False` so the same transform applies to unseen data — no lookahead. |
+| `"off"` | Original notebook-style flow via FinRL's `DRLAgent`. No state-vector scaling at all. |
+| `"indicators"` (recommended) | `SelectiveVecNormalize` — z-score **only** the indicator dimensions; cash, prices, and holdings pass through unchanged. |
+| `"all"` | Plain `VecNormalize` — z-score every observation dim. Matches SB3's default. Mostly kept for comparison. |
 
-| `normalize_only_indicators` | What gets normalized |
-|---|---|
-| `false` | **Full normalization** — z-score every observation dim (cash, prices, holdings, indicators). Matches SB3's default `VecNormalize` behavior. |
-| `true` (recommended) | **Selective normalization** via `SelectiveVecNormalize` — z-score only the indicator dimensions; cash, prices, and holdings are passed through unchanged. |
+**Why `"indicators"` is the recommended setting.** Prices drift across decades (AAPL ~$30 in 2009 vs ~$150 in 2021), and cash/holdings depend on the agent's behavior during training (typically near-empty cash, large positions). At backtest start, cash is full and holdings are zero — both far outside the running mean/std learned from training. Naïvely normalizing these with training-period stats produces clipped, off-distribution observations at backtest, hurting performance especially after longer training (where the policy commits more strongly to training-time patterns). Indicators (MACD, RSI, CCI, …) are designed to be stationary and oscillating, so normalizing them is safe and helpful.
 
-**Why `normalize_only_indicators: true` is the recommended setting.** Prices drift across decades (AAPL ~$30 in 2009 vs ~$150 in 2021), and cash/holdings depend on the agent's behavior during training (typically near-empty cash, large positions). At backtest start, cash is full and holdings are zero — both far outside the running mean/std learned from training. Naïvely normalizing these with training-period stats produces clipped, off-distribution observations at backtest, hurting performance especially after longer training (where the policy commits more strongly to training-time patterns). Indicators (MACD, RSI, CCI, …) are designed to be stationary and oscillating, so normalizing them is safe and helpful.
+When `obs_mode != "off"`, the wrapper's running stats are saved alongside each model (`vecnormalize_<algo>.pkl`) and reloaded at backtest with `training=False` so the same transform applies to unseen data — no lookahead.
 
-`normalize_reward` and `clip_obs` are forwarded to the wrapper when normalization is on; ignored otherwise.
+`clip_obs` controls the symmetric clip applied to z-scored values (default 10.0). Reward normalization is intentionally not exposed — the env already has `reward_scaling=1e-4`, and PPO is scale-invariant in its advantage estimation, so any additional reward normalization is redundant.
 
 ### `models`
 One entry per algorithm. Each entry has:

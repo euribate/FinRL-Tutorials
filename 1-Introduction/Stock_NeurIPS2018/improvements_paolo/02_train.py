@@ -1,9 +1,13 @@
 """Stage 2 — train every algorithm flagged use=true in config.json.
 
-Two execution paths depending on `normalization.normalize_observations`:
-  * False  ->  FinRL DRLAgent path (same as the original notebook).
-  * True   ->  raw SB3 + VecNormalize wrapping; running mean/std stats are
-               persisted alongside the model for use at backtest time.
+Three execution paths depending on `normalization.obs_mode`:
+  * "off"        -> FinRL DRLAgent path (same as the original notebook).
+  * "indicators" -> raw SB3 + SelectiveVecNormalize wrapping (z-score only
+                    the indicator dimensions of the state vector).
+  * "all"        -> raw SB3 + standard VecNormalize wrapping (z-score every
+                    observation dim — matches SB3 defaults).
+In the latter two modes the running mean/std stats are persisted alongside
+the model (vecnormalize_<algo>.pkl) for use at backtest time.
 
 Usage:
     python 02_train.py --config config.json
@@ -72,28 +76,34 @@ def train_with_vecnormalize(env: StockTradingEnv, algo: str, model_cfg: dict,
                             norm_cfg: dict, tb_dir: Path, seed: int):
     """Raw SB3 + VecNormalize path. Returns (model, vec_env).
 
-    If norm_cfg['normalize_only_indicators'] is True (recommended), the obs
-    normalization is restricted to indicator dimensions only. Prices, cash,
-    and holdings have time-drifting or behavior-dependent natural scales
-    that produce off-distribution observations at backtest when normalized
-    using training-period running statistics.
+    obs_mode = 'indicators' (recommended) restricts z-score normalization
+    to indicator dims only. Prices, cash, and holdings have time-drifting
+    or behavior-dependent natural scales that produce off-distribution
+    observations at backtest when normalized with training-period stats.
+
+    obs_mode = 'all' z-scores every observation dim (plain VecNormalize).
     """
     venv = DummyVecEnv([lambda: env])
-    only_ind = norm_cfg.get("normalize_only_indicators", False)
+    obs_mode = norm_cfg["obs_mode"]
     vn_kwargs = dict(
         norm_obs=True,
-        norm_reward=norm_cfg.get("normalize_reward", True),
+        norm_reward=False,
         clip_obs=norm_cfg.get("clip_obs", 10.0),
     )
-    if only_ind:
+    if obs_mode == "indicators":
         sd = env.stock_dim
         ni = len(env.tech_indicator_list)
         idx = indicator_indices(sd, ni)
         print(f"  SelectiveVecNormalize: normalizing {len(idx)} indicator dims "
               f"(of {1 + 2 * sd + ni * sd} total); leaving cash/prices/holdings raw.")
         venv = SelectiveVecNormalize(venv, norm_indices=idx, **vn_kwargs)
-    else:
+    elif obs_mode == "all":
+        print("  VecNormalize: normalizing every observation dim (full mode).")
         venv = VecNormalize(venv, **vn_kwargs)
+    else:
+        raise ValueError(
+            f"Unexpected obs_mode={obs_mode!r}; expected 'indicators' or 'all'."
+        )
     n_actions = venv.action_space.shape[-1]
     AlgoClass = ALGO_REGISTRY[algo]
     model = AlgoClass(
@@ -123,14 +133,23 @@ def main() -> None:
     model_dir = resolve_path(config, "model_dir")
     tb_dir    = resolve_path(config, "tensorboard_dir")
     seed      = config.get("training", {}).get("seed", 42)
-    normalize = config["normalization"]["normalize_observations"]
+    obs_mode  = config["normalization"]["obs_mode"]
 
     algos = enabled_models(config)
     if not algos:
         print("No algorithms enabled (set models.<name>.use = true).")
         return
 
-    print(f"Mode: {'NORMALIZED (VecNormalize)' if normalize else 'STANDARD (FinRL DRLAgent)'}")
+    mode_label = {
+        "off":        "STANDARD (FinRL DRLAgent, no normalization)",
+        "indicators": "NORMALIZED (SelectiveVecNormalize, indicators only)",
+        "all":        "NORMALIZED (VecNormalize, all dims)",
+    }.get(obs_mode)
+    if mode_label is None:
+        raise ValueError(
+            f"normalization.obs_mode={obs_mode!r}; expected 'off', 'indicators', or 'all'."
+        )
+    print(f"Mode: {mode_label}")
     print(f"Algorithms: {algos}")
 
     for algo in algos:
@@ -139,7 +158,11 @@ def main() -> None:
         model_cfg = config["models"][algo]
         model_path = model_dir / f"agent_{algo}.zip"
 
-        if normalize:
+        if obs_mode == "off":
+            model = train_finrl(env, algo, model_cfg, tb_dir, seed)
+            model.save(str(model_path))
+            print(f"Saved {model_path}")
+        else:
             model, venv = train_with_vecnormalize(
                 env, algo, model_cfg, config["normalization"], tb_dir, seed
             )
@@ -147,10 +170,6 @@ def main() -> None:
             model.save(str(model_path))
             venv.save(str(stats_path))
             print(f"Saved {model_path}\nSaved {stats_path}")
-        else:
-            model = train_finrl(env, algo, model_cfg, tb_dir, seed)
-            model.save(str(model_path))
-            print(f"Saved {model_path}")
 
 
 if __name__ == "__main__":

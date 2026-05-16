@@ -370,7 +370,7 @@ def main() -> None:
     vn_setting = bt_cfg["state_reconstruction"]["vecnormalize_load"]
     vecnormalize = None
     if vn_setting == "auto":
-        if src_cfg["normalization"]["normalize_observations"]:
+        if src_cfg["normalization"]["obs_mode"] != "off":
             vecnormalize = load_vecnormalize_stats(model_dir, algo)
             if vecnormalize is not None:
                 print(f"  VecNormalize: loaded (obs count={int(vecnormalize.obs_rms.count):,})")
