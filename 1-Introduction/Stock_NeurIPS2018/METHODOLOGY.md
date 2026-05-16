@@ -304,6 +304,23 @@ See §8.3. The repo's MVO baseline assumes the pre-2019 DJI composition.
 ### 9.5 Train-once / no retraining (alpha decay)
 The author of the tutorial explicitly notes: training happens once on 2009-01 to 2020-07, then the policy trades 2020-07 to 2021-10 with no retraining and no hyperparameter re-tuning. In production, quant teams retrain weekly/monthly/quarterly because markets change — the longer you trade after the last training cutoff, the further the live data drifts from the training distribution, and the strategy's edge ("alpha") decays. Expect performance to degrade toward the end of the trade window for this reason alone.
 
+### 9.6 Unnormalized state vector
+The default state mixes features on wildly different scales: cash (~10⁶), prices (10–10³), share holdings (0 to thousands), bounded indicators like RSI (0–100), unbounded indicators like CCI (±300), and price-scale indicators like Bollinger bands and SMAs. Feeding this directly into an MLP with `Tanh` activations is poor practice — the large-magnitude features saturate the activations (zero gradient), while the small ones dominate the learnable signal. The network's effective capacity collapses to whatever features happen to be accidentally well-scaled.
+
+**Why FinRL ships it this way**: historical inertia — the original 2018 paper didn't normalize, and the maintainers kept the convention for reproducibility. The single existing mitigation, `reward_scaling = 1e-4`, scales only the reward, not the observation.
+
+**Symptoms in our runs that point to this**:
+- PPO `explained_variance` stuck near 0 for 200k steps — critic cannot fit returns when inputs are unscaled.
+- `value_loss` swinging from 12 → 278 → 67 — numerical instability in the critic, exacerbated by both unscaled inputs and the magnitude of raw $ rewards.
+- Slow / non-convergent reward curves across A2C and PPO — common signature of input-scale problems in deep RL.
+
+**Conceptual options** (no implementation here):
+1. **Running mean/std observation normalization** (e.g., SB3's `VecNormalize`): the standard, low-effort fix. The wrapper maintains running statistics of every observation dimension during training, z-scores them on the fly, and persists the stats so the same transform applies at backtest time. Pitfall: the statistics file must be saved with the model and reused at inference — fitting a fresh normalizer on trade data would leak lookahead.
+2. **Static z-score inside the env**: compute mean/std of each feature group from the training set once, then apply in `_initiate_state` / `_update_state`. More explicit and debuggable but requires you to manage the stats yourself.
+3. **Re-design the feature set** (the "quanty" approach): replace raw prices with log-returns, replace cash/holdings with portfolio weights summing to 1. Features become naturally bounded and stationary, but you also have to rethink the action space (allocation weights instead of share counts). Highest payoff, highest effort.
+
+**Why this matters here**: addressing scale is likely the single largest practical improvement available to this project — larger than tuning learning rates or training longer. Combined with reducing `hmax` (per §9.1), it would directly attack the two biggest weaknesses in the default FinRL setup.
+
 ---
 
 ## 10. Tuning Recommendations
@@ -316,6 +333,7 @@ If reusing this project as a starting point:
 | Stabilize PPO | `learning_rate=1e-4`, `n_steps=4096`, possibly linear LR schedule |
 | Reduce action clipping | Lower `hmax` from 100 to 50; or add an explicit penalty |
 | Reduce DDPG memory | `buffer_size=100_000` instead of default 1M |
+| Normalize observations | Wrap env with `VecNormalize` (norm_obs + norm_reward); save stats with the model (see §9.6) |
 | Compare fairly | Train all algos with the same step budget, then judge by **backtest equity curve and Sharpe**, not by training logs |
 
 ---
