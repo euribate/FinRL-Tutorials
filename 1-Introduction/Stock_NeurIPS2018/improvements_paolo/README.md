@@ -184,3 +184,69 @@ Output directories. Relative paths are resolved against the `improvements_paolo/
 - Custom action-space designs (the FinRL `StockTradingEnv` is used as-is).
 
 Each of these can be layered on top later without changing the surface area of `config.json`.
+
+---
+
+## Stage 4 (optional) — Backtrader replay (`04_backtrader_replay.py`)
+
+A separate, optional stage that re-runs the trained agent through the **backtrader** event-driven engine, giving you proper transaction costs, slippage models, and a full analyzer suite (Sharpe, drawdown, trade analyzer, returns, transactions, optional pyfolio).
+
+Uses **Approach B**: the SB3 model is called live inside `bt.Strategy.next()`. The strategy reconstructs StockTradingEnv's state vector each bar (cash + prices + holdings + indicators), applies the saved `VecNormalize` stats if training used them, and converts `model.predict()` actions into per-ticker buy/sell orders. Backtrader handles fills, commissions, and slippage.
+
+### Files
+- `backtrader_config.json` — broker/slippage/analyzer settings, references `config.json` for tickers/dates/indicators/hmax/normalization.
+- `04_backtrader_replay.py` — the replay script.
+
+### Dependency
+
+```bash
+pip install backtrader
+```
+
+### Run
+
+```bash
+python 04_backtrader_replay.py --config backtrader_config.json
+```
+
+### Outputs (under `results_backtrader/` by default)
+| File | What's in it |
+|---|---|
+| `equity_backtrader.csv` | Daily portfolio value over the trade period. |
+| `trade_log.csv` | Every executed fill: date, ticker, side, size, price, value, commission. |
+| `transactions.csv` | Backtrader's own per-fill log (slightly different schema). |
+| `summary.json` | All enabled analyzer outputs (Sharpe, drawdown, returns, trade stats, …). |
+| `backtrader_plot.png` | Cerebro's standard chart (price + trades). |
+
+### `backtrader_config.json` — section overview
+
+| Section | Purpose |
+|---|---|
+| `source_config` | Path to the training `config.json`. Tickers, dates, indicators, hmax, and the normalization flag are inherited so the runtime state vector matches training. |
+| `model.algorithm` + `model.deterministic` | Which trained model (`agent_<algo>.zip`) to load, and whether to use mean-action prediction. |
+| `broker.commission` | `type: "percentage"` (e.g. 0.001 = 0.1%) or `"fixed"` ($/share). |
+| `broker.slippage` | `type: "percentage"`, `"fixed"`, or `"none"`. `apply_to` mirrors backtrader's `slip_open`/`slip_limit`/`slip_match`/`slip_out` flags. |
+| `broker.check_submit`/`allow_short`/`coc` | Backtrader broker toggles: reject orders that overdraw cash, allow short selling, cheat-on-close. |
+| `execution.hmax_override` | Stress-test the policy with a different action scale than training (e.g. force smaller trades). `null` = use the training `hmax`. |
+| `execution.min_order_size` | Skip near-zero share trades that would only burn commission. |
+| `state_reconstruction.vecnormalize_load` | `"auto"` reads `models/vecnormalize_<algo>.pkl` when source_config has `normalize_observations=true`. `"off"` disables. `"manual"` + a `vecnormalize_path` for a custom stats file. |
+| `analyzers` | Per-analyzer enabled flag + key parameters. |
+| `output` | Result directory + filenames. |
+| `logging` | `verbosity` and `log_every_trade` for stdout chatter. |
+
+### Why use this alongside `03_backtest.py`
+
+| Aspect | `03_backtest.py` | `04_backtrader_replay.py` |
+|---|---|---|
+| Engine | FinRL's `StockTradingEnv` (training-side) | Backtrader (event-driven) |
+| Cost model | Single percentage in env_kwargs | Full broker model: commission + slippage + check_submit + COC |
+| Outputs | Equity CSV + plot + on-screen metrics | Equity CSV + per-fill trade log + every-analyzer JSON + bt plot |
+| MVO / DJIA baselines | Yes | No (run `03_backtest.py` separately) |
+| State coherence | Trivial (uses the same env) | Approach B — state vector and VecNormalize must be exactly mirrored (handled by the script, but worth knowing) |
+
+### Common gotchas
+
+- **Backtrader rejects orders that would exceed cash by default.** FinRL's env silently clips. So replayed trades on tight cash may not execute identically. Either match `initial_cash` exactly or relax `check_submit`.
+- **Order execution timing.** Default is "next bar's open" (more realistic). Set `broker.coc = true` to fill at the current bar's close, which more closely matches the env.
+- **Indicator order matters.** The state vector is built using `source_config.data.indicators` in declared order — never reorder that list after training without retraining.
+- **VecNormalize stats are model-specific.** Re-training overwrites them. If you change the source config (different indicators, tickers, normalization), retrain before re-running the backtrader replay.

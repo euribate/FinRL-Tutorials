@@ -1,0 +1,92 @@
+{
+  "_description": "Backtrader-specific config for replaying a trained RL agent via Approach B: the SB3 model is called live inside a bt.Strategy.next(). State vector parameters (tickers, dates, indicators, hmax, normalization stats) are inherited from source_config to guarantee the runtime state matches what the policy was trained on.",
+
+  "source_config": "config.json",
+
+  "model": {
+    "algorithm": "ppo",
+    "deterministic": true
+  },
+
+  "data": {
+    "use_source_dates": true,
+    "trade_start_date": null,
+    "trade_end_date":   null,
+    "data_csv": "data/trade_data.csv"
+  },
+
+  "broker": {
+    "initial_cash": 1000000,
+
+    "commission": {
+      "type":      "percentage",
+      "value":     0.001,
+      "stocklike": true,
+      "_notes": "type='percentage' uses bt.broker.setcommission(commission=value, percabs=True, stocklike=stocklike). type='fixed' uses absolute $ per share. Set value=0 to disable."
+    },
+
+    "slippage": {
+      "type":  "percentage",
+      "value": 0.0005,
+      "apply_to": {
+        "open":  true,
+        "limit": true,
+        "match": true,
+        "out":   false
+      },
+      "_notes": "type='percentage' -> set_slippage_perc(perc=value, ...). type='fixed' -> set_slippage_fixed(fixed=value, ...). type='none' disables slippage entirely. apply_to flags map directly to backtrader's slip_open / slip_limit / slip_match / slip_out parameters."
+    },
+
+    "check_submit": true,
+    "allow_short":  false,
+    "coc":          false,
+    "_notes": "check_submit -> bt.broker.set_checksubmit; rejects orders that would overdraw cash. allow_short -> bt.broker.set_shortcash; default false matches the long-only training env. coc (cheat-on-close) -> bt.broker.set_coc; if true, market orders fill at the close of the SAME bar instead of the open of the next bar."
+  },
+
+  "execution": {
+    "order_type":   "market",
+    "round_shares": true,
+    "hmax_override": null,
+    "min_order_size": 1,
+    "_notes": "order_type accepts 'market', 'limit', 'stop'. Limit/stop need extra price logic and are kept here as a placeholder. round_shares converts (action * hmax) to int (matches StockTradingEnv). hmax_override lets you scale the agent's action amplitude differently from training (e.g. for stress tests). min_order_size suppresses near-zero trades that just churn fees."
+  },
+
+  "state_reconstruction": {
+    "use_source_indicators": true,
+    "indicators_override":   null,
+    "vecnormalize_load":     "auto",
+    "vecnormalize_path":     null,
+    "_notes": "use_source_indicators=true reads data.indicators from source_config — required for the state vector to match training. If you trained with normalize_observations=true (per source_config), set vecnormalize_load='auto' to auto-load models/vecnormalize_<algo>.pkl and apply the same z-score transform inside next(). Set vecnormalize_load='off' to skip normalization (only safe if source_config.normalization.normalize_observations=false). 'manual' + a vecnormalize_path lets you point at a custom stats file."
+  },
+
+  "analyzers": {
+    "sharpe":         {"enabled": true,  "riskfreerate": 0.0, "annualize": true, "timeframe": "Days"},
+    "drawdown":       {"enabled": true},
+    "returns":        {"enabled": true,  "tann": 252},
+    "trade_analyzer": {"enabled": true},
+    "annual_return":  {"enabled": true},
+    "transactions":   {"enabled": true},
+    "position_value": {"enabled": false},
+    "pyfolio":        {"enabled": false, "_notes": "Requires pyfolio installed; when enabled emits returns/positions/transactions DataFrames compatible with pyfolio.create_full_tear_sheet."}
+  },
+
+  "output": {
+    "results_dir":      "results_backtrader",
+    "equity_csv":       "equity_backtrader.csv",
+    "transactions_csv": "transactions.csv",
+    "trade_log_csv":    "trade_log.csv",
+    "summary_json":     "summary.json",
+    "plot": {
+      "enabled":   true,
+      "filename":  "backtrader_plot.png",
+      "style":     "candle",
+      "show_volume": false
+    }
+  },
+
+  "logging": {
+    "verbosity": "info",
+    "log_every_trade": false,
+    "_notes": "verbosity in ('silent','info','debug'). log_every_trade prints each fill to stdout — noisy for long backtests."
+  }
+}
