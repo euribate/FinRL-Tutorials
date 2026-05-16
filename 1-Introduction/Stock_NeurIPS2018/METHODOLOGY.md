@@ -18,7 +18,50 @@ The project is split across **three notebooks** that communicate via CSV artifac
 
 ---
 
-## 2. End-to-End Workflow (PPO Example)
+## 2. Reinforcement Learning Algorithms in This Project
+
+FinRL exposes five Stable-Baselines3 algorithms — **A2C, DDPG, PPO, TD3, SAC**. They differ along several axes: on-policy vs off-policy, deterministic vs stochastic policy, single vs twin critics, exploration mechanism, sample efficiency, and stability. The notebooks let you flip each one on with a boolean (`if_using_ppo = True`, etc.). This section gives a one-paragraph overview of each, plus a comparison table.
+
+### 2.1 A2C (Advantage Actor-Critic)
+Synchronous variant of A3C. On-policy, actor-critic. The actor outputs a stochastic policy; the critic estimates state values. Uses **advantage** (`A = R − V(s)`) instead of raw returns to reduce variance. Updates happen every few env steps (small `n_steps=5` by default). Strengths: simple, fast wall-clock per update, low memory. Weaknesses: sample-inefficient, noisy gradients, easily outperformed by PPO. Continuous or discrete actions. Best for: quick baselines, low-budget experiments.
+
+### 2.2 DDPG (Deep Deterministic Policy Gradient)
+Off-policy, deterministic actor + Q-critic. Designed for continuous actions. The actor maps state → single deterministic action (no distribution); the critic learns `Q(s, a)`. Trained from a **replay buffer** with Polyak-averaged target networks for stability. Exploration via additive action noise (Ornstein-Uhlenbeck or Gaussian). Strengths: sample-efficient compared to on-policy methods. Weaknesses: notoriously unstable — Q-value overestimation, sensitive to hyperparameters, can diverge silently. Continuous actions only. Largely superseded by TD3 and SAC.
+
+### 2.3 PPO (Proximal Policy Optimization)
+On-policy, stochastic actor-critic with a trust-region clip. Collects a rollout (`n_steps=2048`), then does multiple epochs of mini-batch updates with the **clipped surrogate objective** (`clip_range=0.2`) that prevents policy updates from straying too far. Diagnostics: `approx_kl`, `clip_fraction`. Strengths: robust default behavior (works on most problems without heavy tuning and rarely diverges), runs on continuous and discrete actions, the de facto baseline in RL. Weaknesses: needs more steps than off-policy methods, weak when constraints frequently clip its actions. Best for: a strong default with minimal tuning.
+
+### 2.4 TD3 (Twin Delayed DDPG)
+DDPG fixed. Three tricks: (1) **twin critics** — train two Q-networks and use the minimum to compute targets (combats overestimation); (2) **delayed policy updates** — update actor every k=2 critic updates; (3) **target-policy smoothing** — add noise to the target action so the critic doesn't overfit narrow Q-peaks. Off-policy, deterministic, continuous-only. Strengths: much more stable than DDPG with similar sample efficiency. Weaknesses: still deterministic (less exploration than SAC). Often the right choice when SAC is overkill.
+
+### 2.5 SAC (Soft Actor-Critic)
+Off-policy, stochastic actor + twin Q-critics with maximum-entropy objective. Optimizes expected return plus an **entropy bonus** (`α · H(π)`) — explicitly rewarding exploration. Has a learned temperature `α` that auto-tunes entropy. Continuous actions. Strengths: state-of-the-art sample efficiency on most continuous-control benchmarks; very robust; minimal tuning. Weaknesses: more compute per step than DDPG/TD3, replay buffer memory cost. Often the best practical choice when sample efficiency matters.
+
+### 2.6 Comparison table
+
+| Property | **A2C** | **DDPG** | **PPO** | **TD3** | **SAC** |
+|---|---|---|---|---|---|
+| Family | Actor-Critic | Actor-Critic (Q-based) | Actor-Critic | Actor-Critic (Q-based) | Actor-Critic (Q-based, max-ent) |
+| Policy type | Stochastic | Deterministic | Stochastic | Deterministic | Stochastic |
+| On/Off-policy | On | Off | On | Off | Off |
+| Action space | Continuous/Discrete | Continuous | Continuous/Discrete | Continuous | Continuous |
+| Buffer | Rollout (small) | Replay (large) | Rollout (medium) | Replay (large) | Replay (large) |
+| Critics | 1 V(s) | 1 Q(s,a) | 1 V(s) | 2 Q(s,a) twin | 2 Q(s,a) twin |
+| Exploration | Stochastic policy | External noise | Stochastic policy | External noise + target smoothing | Entropy bonus (auto-tuned) |
+| Sample efficiency | Low | High | Medium | High | High |
+| Stability | Medium | Low | High | High | Very High |
+| Tuning difficulty | Easy | Hard | Easy | Medium | Easy |
+| Memory cost | Low | High | Low–Medium | High | High |
+| Steps to converge (FinRL) | Highest | Medium | Medium-High | Medium | Medium |
+| Best when | Cheap baseline | (legacy) | Robust default | Stable continuous control | Best sample efficiency, less tuning |
+
+**Practical ranking for FinRL stock trading**: SAC ≈ TD3 > PPO > DDPG > A2C, with PPO usually the most reproducible if compute is limited.
+
+> **Note on "robust default" (PPO).** It means the algorithm works reasonably on most problems without careful tuning and rarely fails catastrophically — not that it produces the *best* final policy. SAC and TD3 often beat PPO on continuous control, but they require more careful setup. PPO is the lower-variance-of-outcomes choice.
+
+---
+
+## 3. End-to-End Workflow (PPO Example)
 
 ### Stage 1 — Data Preparation
 1. Download daily OHLCV bars for DJI-30 tickers from Yahoo Finance (2009-01-01 → 2021-10-29).
@@ -49,11 +92,11 @@ The project is split across **three notebooks** that communicate via CSV artifac
 
 ---
 
-## 3. The Trading Environment in Detail
+## 4. The Trading Environment in Detail
 
 Source: `finrl/meta/env_stock_trading/env_stocktrading.py` (class `StockTradingEnv`).
 
-### 3.1 State vector
+### 4.1 State vector
 ```
 state = [cash,
          price_1, ..., price_N,
@@ -62,16 +105,16 @@ state = [cash,
 ```
 Dimensions: `state_space = 1 + 2·stock_dim + n_indicators·stock_dim`. For the tutorial (N=30 stocks, K=8 indicators): `1 + 60 + 240 = 301`.
 
-### 3.2 Action vector
+### 4.2 Action vector
 Continuous, one value per stock in `[-1, +1]`. `spaces.Box(low=-1, high=1, shape=(stock_dim,))`.
 
-### 3.3 Reward
+### 4.3 Reward
 ```
 reward = (end_total_asset − begin_total_asset) × reward_scaling
 ```
 Raw daily P&L in dollars, then numerically scaled.
 
-### 3.4 Step lifecycle (one trading day)
+### 4.4 Step lifecycle (one trading day)
 1. Receive `action` from the agent.
 2. Scale: `actions = (action × hmax).astype(int)` — intended trade sizes in integer shares.
 3. **Turbulence override**: if `turbulence >= turbulence_threshold`, replace actions with `[-hmax] × N` (sell everything).
@@ -83,7 +126,7 @@ Raw daily P&L in dollars, then numerically scaled.
 9. Compute `end_total_asset`; reward = ΔP&L × `reward_scaling`.
 10. Return `(state, reward, terminal, truncated, info)`.
 
-### 3.5 Key parameters (defined in your notebook's `env_kwargs`)
+### 4.5 Key parameters (defined in your notebook's `env_kwargs`)
 
 | Parameter | Tutorial value | Meaning |
 |---|---|---|
@@ -98,7 +141,7 @@ Raw daily P&L in dollars, then numerically scaled.
 
 ---
 
-## 4. Indicators
+## 5. Indicators
 
 ### Where the list is defined
 `finrl/config.py`:
@@ -116,9 +159,9 @@ These are just string keys.
 
 ---
 
-## 5. Algorithms & Network Architecture
+## 6. Neural Network Architecture (PPO / SB3 Defaults)
 
-### 5.1 Default PPO network (SB3 `MlpPolicy`)
+### 6.1 Default PPO network (SB3 `MlpPolicy`)
 No explicit network parameters are passed in the notebook because FinRL's `agent.get_model("ppo")` resolves to SB3's `PPO(policy="MlpPolicy", ...)` — a default architecture:
 
 - **Type**: feedforward MLP
@@ -136,7 +179,7 @@ state (301)
    └──► [Linear 64→1]  ──► state value   (critic)
 ```
 
-### 5.2 Overriding the architecture
+### 6.2 Overriding the architecture
 ```python
 import torch.nn as nn
 model_ppo = agent.get_model("ppo", policy_kwargs={
@@ -145,14 +188,14 @@ model_ppo = agent.get_model("ppo", policy_kwargs={
 })
 ```
 
-### 5.3 PPO training hyperparameters (FinRL defaults)
+### 6.3 PPO training hyperparameters (FinRL defaults)
 Live in `finrl/config.py` under `PPO_PARAMS`: `n_steps=2048`, `ent_coef=0.01`, `learning_rate=0.00025`, `batch_size=64`.
 
 ---
 
-## 6. Interpreting Training Logs
+## 7. Interpreting Training Logs
 
-### 6.1 Common fields (all algos)
+### 7.1 Common fields (all algos)
 | Field | Meaning |
 |---|---|
 | `fps` | env steps per second |
@@ -165,7 +208,7 @@ Live in `finrl/config.py` under `PPO_PARAMS`: `n_steps=2048`, `ent_coef=0.01`, `
 | `reward_mean / min / max` | episode reward statistics |
 | `std` | width of policy Gaussian; should narrow over training as policy commits |
 
-### 6.2 PPO-specific
+### 7.2 PPO-specific
 | Field | Meaning |
 |---|---|
 | `approx_kl` | KL divergence between old and new policy; healthy range ≈ 0.01–0.02 |
@@ -173,25 +216,25 @@ Live in `finrl/config.py` under `PPO_PARAMS`: `n_steps=2048`, `ent_coef=0.01`, `
 | `clip_range` | PPO's epsilon (default 0.2) |
 | `policy_gradient_loss` | the PPO surrogate objective |
 
-### 6.3 What healthy training looks like
+### 7.3 What healthy training looks like
 - `reward_mean` trending up
 - `explained_variance` climbing toward ≥ 0.5
 - `value_loss` falling
 - `std` narrowing (policy committing to a strategy)
 - `clip_fraction` low and stable (PPO)
 
-### 6.4 What this project's runs actually showed (50k–200k steps)
+### 7.4 What this project's runs actually showed (50k–200k steps)
 - A2C (50k): `reward_mean ≈ 0.13`, `explained_variance ≈ 0`. Policy barely above random.
 - PPO (200k): `reward_mean` stuck at ~0.17 across 196k extra steps; `clip_fraction` rose 0.14 → 0.38, `std` widened 1.00 → 1.15. Trust-region indicators all moved the wrong way — **policy was destabilizing, not converging**.
-- DDPG: trained successfully despite noisy callback errors (see §7).
+- DDPG: trained successfully despite noisy callback errors (see §8).
 
 **Takeaway**: 50k timesteps is far below what FinRL agents typically need. References usually recommend 200k–1M for meaningful convergence. Even then, the training curve is a weak proxy — the **backtest equity curve** is the metric that matters.
 
 ---
 
-## 7. Errors Encountered & Fixes
+## 8. Errors Encountered & Fixes
 
-### 7.1 `Logging Error: 'rollout_buffer'` (DDPG/SAC/TD3)
+### 8.1 `Logging Error: 'rollout_buffer'` (DDPG/SAC/TD3)
 **Cause**: FinRL's custom `TensorboardCallback` reads `self.locals["rollout_buffer"]` to log per-step reward. Off-policy algos (DDPG/SAC/TD3) use a `replay_buffer` instead, so the lookup raises `KeyError`, caught and printed as `Logging Error: 'rollout_buffer'`.
 
 **Impact**: Cosmetic. Training itself is unaffected; only the custom reward log is missing from TensorBoard. Standard SB3 logs (`train/actor_loss`, `train/critic_loss`) still appear.
@@ -201,7 +244,7 @@ Live in `finrl/config.py` under `PPO_PARAMS`: `n_steps=2048`, `ent_coef=0.01`, `
 - Suppress: `logging.getLogger().setLevel(logging.ERROR)` before training
 - Patch FinRL's callback to check for both `rollout_buffer` and `replay_buffer`
 
-### 7.2 Replay buffer memory warning
+### 8.2 Replay buffer memory warning
 ```
 UserWarning: This system does not have apparently enough memory to store
 the complete replay buffer 2.54GB > 1.26GB
@@ -216,7 +259,7 @@ model_ddpg = agent.get_model("ddpg", model_kwargs={
 ```
 A 50k-step run cannot fill more than 50k transitions anyway — the larger buffer is purely waste.
 
-### 7.3 MVO `ValueError: operands could not be broadcast together with shapes (29,) (30,)`
+### 8.3 MVO `ValueError: operands could not be broadcast together with shapes (29,) (30,)`
 **Cause**: Hardcoded `range(29)` in the MVO weights cell of `Stock_NeurIPS2018_3_Backtest.ipynb`:
 ```python
 mvo_weights = np.array([1000000 * cleaned_weights_mean[i] for i in range(29)])
@@ -228,14 +271,14 @@ The DJI added Dow Inc. in 2019, bringing the index to 30 tickers. The tutorial c
 mvo_weights = np.array([1000000 * cleaned_weights_mean[i] for i in range(stock_dimension)])
 ```
 
-### 7.4 `!pip install` cells
+### 8.4 `!pip install` cells
 Required only on **Google Colab** (clean VM per session). For a local `.venv`, run once then comment out — re-running just refetches the same packages and wastes a minute.
 
 ---
 
-## 8. Known Limitations of the Default Environment
+## 9. Known Limitations of the Default Environment
 
-### 8.1 Action clipping bias
+### 9.1 Action clipping bias
 The policy outputs an action `a`; the env executes `a' = clip(a)` (bounded by cash, holdings, turbulence). PPO is updated using the **raw** `a`, not the executed `a'`. Consequences:
 
 - Gradient credit assignment uses the wrong action when constraints bind.
@@ -249,18 +292,21 @@ The policy outputs an action `a`; the env executes `a' = clip(a)` (bounded by ca
 2. Add a `|requested − executed|` penalty to the reward
 3. Re-design the action space to be cash-conditional (e.g., action ∈ [-1,1] = fraction of available cash to use)
 
-### 8.2 Turbulence override hides agent agency
+### 9.2 Turbulence override hides agent agency
 On high-VIX days the env replaces the agent's action with a forced full liquidation. PPO loses control entirely, so the policy never learns to handle market stress — it only learns the conditional behavior given the override.
 
-### 8.3 Reward = pure ΔP&L
+### 9.3 Reward = pure ΔP&L
 No drawdown penalty, no Sharpe shaping, no transaction-frequency penalty beyond the bps fee. The agent optimizes for raw return, not risk-adjusted return.
 
-### 8.4 Hardcoded ticker counts in tutorial code
-See §7.3. The repo's MVO baseline assumes the pre-2019 DJI composition.
+### 9.4 Hardcoded ticker counts in tutorial code
+See §8.3. The repo's MVO baseline assumes the pre-2019 DJI composition.
+
+### 9.5 Train-once / no retraining (alpha decay)
+The author of the tutorial explicitly notes: training happens once on 2009-01 to 2020-07, then the policy trades 2020-07 to 2021-10 with no retraining and no hyperparameter re-tuning. In production, quant teams retrain weekly/monthly/quarterly because markets change — the longer you trade after the last training cutoff, the further the live data drifts from the training distribution, and the strategy's edge ("alpha") decays. Expect performance to degrade toward the end of the trade window for this reason alone.
 
 ---
 
-## 9. Tuning Recommendations
+## 10. Tuning Recommendations
 
 If reusing this project as a starting point:
 
@@ -274,7 +320,7 @@ If reusing this project as a starting point:
 
 ---
 
-## 10. File Map (Quick Reference)
+## 11. File Map (Quick Reference)
 
 | Path | What lives there |
 |---|---|
