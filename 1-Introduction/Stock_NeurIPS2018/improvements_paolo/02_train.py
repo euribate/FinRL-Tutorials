@@ -20,8 +20,10 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from utils import (
     ALGO_REGISTRY,
+    SelectiveVecNormalize,
     build_env_kwargs,
     enabled_models,
+    indicator_indices,
     load_config,
     parse_model_kwargs,
     parse_policy_kwargs,
@@ -68,14 +70,30 @@ def train_finrl(env: StockTradingEnv, algo: str, model_cfg: dict,
 
 def train_with_vecnormalize(env: StockTradingEnv, algo: str, model_cfg: dict,
                             norm_cfg: dict, tb_dir: Path, seed: int):
-    """Raw SB3 + VecNormalize path. Returns (model, vec_env)."""
+    """Raw SB3 + VecNormalize path. Returns (model, vec_env).
+
+    If norm_cfg['normalize_only_indicators'] is True (recommended), the obs
+    normalization is restricted to indicator dimensions only. Prices, cash,
+    and holdings have time-drifting or behavior-dependent natural scales
+    that produce off-distribution observations at backtest when normalized
+    using training-period running statistics.
+    """
     venv = DummyVecEnv([lambda: env])
-    venv = VecNormalize(
-        venv,
+    only_ind = norm_cfg.get("normalize_only_indicators", False)
+    vn_kwargs = dict(
         norm_obs=True,
         norm_reward=norm_cfg.get("normalize_reward", True),
         clip_obs=norm_cfg.get("clip_obs", 10.0),
     )
+    if only_ind:
+        sd = env.stock_dim
+        ni = len(env.tech_indicator_list)
+        idx = indicator_indices(sd, ni)
+        print(f"  SelectiveVecNormalize: normalizing {len(idx)} indicator dims "
+              f"(of {1 + 2 * sd + ni * sd} total); leaving cash/prices/holdings raw.")
+        venv = SelectiveVecNormalize(venv, norm_indices=idx, **vn_kwargs)
+    else:
+        venv = VecNormalize(venv, **vn_kwargs)
     n_actions = venv.action_space.shape[-1]
     AlgoClass = ALGO_REGISTRY[algo]
     model = AlgoClass(

@@ -13,6 +13,57 @@ from stable_baselines3.common.noise import (
     NormalActionNoise,
     OrnsteinUhlenbeckActionNoise,
 )
+from stable_baselines3.common.vec_env import VecNormalize
+
+
+class SelectiveVecNormalize(VecNormalize):
+    """VecNormalize that applies z-score normalization only to specified indices.
+
+    For trading state vectors of the form
+        [cash, prices_1..N, holdings_1..N, ind1_1..N, ind2_1..N, ...]
+    the prices, cash, and holdings dimensions have natural scales that drift
+    across time and depend on policy behavior — normalizing them with
+    training-period running stats causes off-distribution clipping at
+    backtest. Indicators (MACD, RSI, etc.) are designed to be stationary
+    and benefit from z-scoring.
+
+    Pass `norm_indices` as the list of observation dimensions to normalize;
+    all other dimensions are returned unchanged.
+    """
+
+    def __init__(self, venv, norm_indices=None, **kwargs):
+        super().__init__(venv, **kwargs)
+        if norm_indices is None:
+            self.norm_indices = np.arange(self.observation_space.shape[0])
+        else:
+            self.norm_indices = np.asarray(norm_indices, dtype=int)
+
+    def normalize_obs(self, obs):
+        if not self.norm_obs:
+            return obs
+        out = np.asarray(obs, dtype=np.float32).copy()
+        sel = self.norm_indices
+        if sel.size == 0:
+            return out
+        mean = self.obs_rms.mean[sel]
+        std = np.sqrt(self.obs_rms.var[sel] + self.epsilon)
+        normed = (out[..., sel] - mean) / std
+        out[..., sel] = np.clip(normed, -self.clip_obs, self.clip_obs)
+        return out
+
+
+def indicator_indices(stock_dim: int, n_indicators: int) -> list[int]:
+    """Return the observation-vector indices that correspond to indicators.
+
+    StockTradingEnv layout (when stock_dim > 1):
+        index 0                : cash
+        indices 1 .. N         : per-stock prices
+        indices N+1 .. 2N      : per-stock holdings
+        indices 2N+1 .. (2+K)N : per-stock indicators (K = n_indicators)
+    """
+    start = 1 + 2 * stock_dim
+    end = start + n_indicators * stock_dim
+    return list(range(start, end))
 
 ALGO_REGISTRY = {
     "a2c":  A2C,
