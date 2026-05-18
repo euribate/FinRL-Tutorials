@@ -12,16 +12,19 @@ The pipeline is faithful to the notebook: same Dow 30 universe, same dates, same
 PortfolioAllocation_paolo_impruvements/
     config.json                  data + env + per-algorithm hyperparameters
     backtrader_config.json       backtrader-specific replay settings
+    quantstats_config.json       quantstats report settings
     utils.py                     shared helpers (config IO, env_kwargs, covariance)
     01_get_data.py               stage 1: download + indicators + covariance + split
     02_train.py                  stage 2: train each algo flagged use=true
     03_backtest.py               stage 3: backtest + Min-Variance + DJIA baselines
     04_backtrader_replay.py      stage 4: replay one agent through backtrader
+    05_quantstats_report.py      stage 5: QuantStats HTML tearsheet
     README.md                    this file
     data/                        train_data.pkl, trade_data.pkl       (created)
     models/                      agent_<algo>.zip                     (created)
     results/                     equity_curves.csv, equity_plot.png   (created)
     results_backtrader/          backtrader outputs                   (created)
+    results_quantstats/          report.html, metrics.csv             (created)
     tensorboard/                 TB logs per algo                     (created)
 ```
 
@@ -51,6 +54,11 @@ PortfolioAllocation_paolo_impruvements/
 +-----------------------+      results_backtrader/equity_backtrader.csv
 | 04_backtrader_replay  | ---> results_backtrader/summary.json
 +-----------------------+      results_backtrader/transactions.csv (optional)
+            |
+            v   (uses quantstats_config.json)
++-----------------------+      results_quantstats/report.html
+| 05_quantstats_report  | ---> results_quantstats/metrics.csv
++-----------------------+
 ```
 
 Each stage reads `config.json` and writes its outputs into the paths configured under the `paths` section.
@@ -74,6 +82,11 @@ python 03_backtest.py --config config.json
 # 4. (Optional) Replay the trained agent through backtrader for a realistic
 #    broker simulation. Requires `pip install backtrader`.
 python 04_backtrader_replay.py --config backtrader_config.json
+
+# 5. (Optional) Generate a QuantStats HTML tearsheet from stage 4's equity
+#    curve, comparing the strategy against the configured benchmark.
+#    Requires `pip install quantstats`.
+python 05_quantstats_report.py --config quantstats_config.json
 ```
 
 ---
@@ -128,6 +141,22 @@ The replay re-uses everything from `config.json` (tickers, indicators, dates, en
 - `output` — where to write the equity CSV, transactions CSV, summary JSON, and the plot PNG.
 
 The strategy reconstructs the same observation matrix the env produced during training: covariance block read from the `cov_list` column in the pickled trade DataFrame, indicator rows read live from the data feeds.
+
+---
+
+## `quantstats_config.json` — report specifics
+
+Reads the equity-curve CSV from stage 4 and renders a QuantStats HTML tearsheet comparing the strategy against a benchmark. Inherits the benchmark ticker from the main config via the chain `quantstats_config.json` → `backtrader_config.json` → `config.json`.
+
+- `inputs.equity_csv` — path to a CSV with `date` index and an `equity` column. Defaults to `results_backtrader/equity_backtrader.csv` (stage 4's output).
+- `benchmark.use_source` — when `true`, read the benchmark ticker from the main config's `baselines.dji_ticker`.
+- `benchmark.ticker` — used when `use_source` is `false` (e.g., `"^GSPC"` for S&P 500, `"SPY"` for the ETF).
+- `output.report_dir` / `html_filename` / `metrics_csv` — where the HTML tearsheet and the long-form metrics CSV go. Set `metrics_csv` to `null` to skip the CSV.
+- `report.strategy_name` — column label QuantStats uses for the strategy.
+- `report.title` — HTML `<title>` and report header.
+- `report.risk_free_rate` — annualised, used in Sharpe/Sortino calculations.
+
+The script pre-fetches the benchmark via FinRL's `YahooDownloader` and passes a returns `Series` to QuantStats. This is **important**: if you instead let QuantStats download the benchmark internally (its default behaviour when you pass a ticker string), an intermittent DNS failure to `fc.yahoo.com` will silently produce a report with an empty benchmark series, and you'll see warnings like `No non-zero returns found for win rate calculation` and `Beta is zero, cannot calculate Treynor ratio`. The pre-fetch fails loudly on download problems instead of producing a meaningless comparison.
 
 ---
 
@@ -226,7 +255,13 @@ For portfolio allocation the action vector is logits → softmax → portfolio w
 
 Both `StockPortfolioEnv` and the backtrader replay assume **alphabetical ticker order** in the observation matrix columns. The notebook achieves this implicitly via `df.sort_values(['date','tic'])`; the scripts make it explicit in `compute_cov_features()` (sort) and in `RLPortfolioStrategy.__init__` (assertion that the data-feed order matches `ticker_order`). If you ever pass a custom `ticker_list` that isn't already alphabetical, this assertion is what protects you from silently feeding a permuted observation to the model.
 
-### A.10 What was deliberately *not* changed
+### A.10 Stage 5: QuantStats with a pre-fetched benchmark
+
+QuantStats accepts the benchmark either as a ticker string (and downloads it internally via `yfinance.download()`) or as a returns `pd.Series`. The first path is more convenient but couples the report to QuantStats's network behaviour, and the failure mode is silent: a DNS failure to `fc.yahoo.com` (the host yfinance uses for cookie/crumb retrieval) returns an empty DataFrame, QuantStats fills it with zeros, and the report renders with degenerate benchmark stats (Beta 0, zero correlations, Treynor undefined). I hit this on the first run.
+
+The fix in `05_quantstats_report.py` is to pre-fetch the benchmark with FinRL's `YahooDownloader` — the same path stages 3 and 4 already use successfully — and pass the resulting daily-returns series to QuantStats. If the download fails, the script raises a `RuntimeError` immediately instead of producing a misleading report. Side effect: the column label in the metrics CSV changes from `Benchmark (^DJI)` (QuantStats's auto-label when given a ticker) to plain `Benchmark` (the default when given a Series). Cosmetic only — all metrics are correct.
+
+### A.11 What was deliberately *not* changed
 
 To keep this pipeline a faithful replication, the following potential improvements were intentionally *not* applied. They are catalogued in `FinRL_PortfolioAllocation_improvements.md` for the next iteration:
 
