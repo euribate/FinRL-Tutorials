@@ -1,0 +1,88 @@
+{
+  "_description": "Backtrader replay for the portfolio-allocation pipeline. The SB3 model is called live inside bt.Strategy.next(); on each bar the strategy rebuilds the (N+K, N) observation matrix used during training (covariance block + indicator rows), softmaxes the action into target weights, and rebalances via order_target_percent for every ticker.",
+
+  "source_config": "config.json",
+
+  "model": {
+    "algorithm": "a2c",
+    "deterministic": true
+  },
+
+  "data": {
+    "use_source_dates": true,
+    "trade_start_date": null,
+    "trade_end_date":   null,
+    "data_pickle": "data/trade_data.pkl"
+  },
+
+  "broker": {
+    "initial_cash": 1000000,
+
+    "commission": {
+      "type":      "percentage",
+      "value":     0.001,
+      "stocklike": true,
+      "_notes": "type='percentage' uses bt.broker.setcommission(commission=value, percabs=True, stocklike=stocklike). type='fixed' uses absolute $ per share. Set value=0 to disable."
+    },
+
+    "slippage": {
+      "type":  "percentage",
+      "value": 0.0005,
+      "apply_to": {
+        "open":  true,
+        "limit": true,
+        "match": true,
+        "out":   false
+      },
+      "_notes": "type='percentage' -> set_slippage_perc; type='fixed' -> set_slippage_fixed; type='none' disables slippage."
+    },
+
+    "check_submit": true,
+    "allow_short":  false,
+    "coc":          false,
+    "_notes": "check_submit -> bt.broker.set_checksubmit. allow_short -> bt.broker.set_shortcash; long-only matches the training env. coc (cheat-on-close) -> bt.broker.set_coc."
+  },
+
+  "execution": {
+    "order_type":      "market",
+    "min_weight_delta": 1e-4,
+    "_notes": "min_weight_delta suppresses target-percent rebalances when the new weight is within this absolute distance of the current portfolio weight - reduces fee churn from near-zero adjustments."
+  },
+
+  "state_reconstruction": {
+    "use_source_indicators": true,
+    "indicators_override":   null,
+    "_notes": "use_source_indicators=true reads data.indicators from source_config - required for the state vector to match training. The covariance block is read from the cov_list column in the trade pickle (computed by 01_get_data.py)."
+  },
+
+  "analyzers": {
+    "sharpe":         {"enabled": true,  "riskfreerate": 0.0, "annualize": true, "timeframe": "Days"},
+    "drawdown":       {"enabled": true},
+    "returns":        {"enabled": true,  "tann": 252},
+    "trade_analyzer": {"enabled": true},
+    "annual_return":  {"enabled": true},
+    "transactions":   {"enabled": true},
+    "position_value": {"enabled": false},
+    "pyfolio":        {"enabled": false, "_notes": "Requires pyfolio installed; emits returns/positions/transactions DataFrames."}
+  },
+
+  "output": {
+    "results_dir":      "results_backtrader",
+    "equity_csv":       "equity_backtrader.csv",
+    "transactions_csv": "transactions.csv",
+    "trade_log_csv":    "trade_log.csv",
+    "summary_json":     "summary.json",
+    "plot": {
+      "enabled":   true,
+      "filename":  "backtrader_plot.png",
+      "style":     "candle",
+      "show_volume": false
+    }
+  },
+
+  "logging": {
+    "verbosity": "info",
+    "log_every_trade": false,
+    "_notes": "verbosity in ('silent','info','debug')."
+  }
+}
