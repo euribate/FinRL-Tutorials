@@ -30,7 +30,7 @@
   },
 
   "normalization": {
-    "obs_mode": "indicators",
+    "obs_mode": "off",
     "clip_obs": 10.0
   },
 

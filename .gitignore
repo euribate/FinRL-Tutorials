@@ -1,3 +1,32 @@
+# Jupyter checkpoints
 .ipynb_checkpoints
 /.ipynb_checkpoints/
 *.ipynb_checkpoints*
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / editor state
+.idea/
+.vscode/
+
+# Claude Code local state
+.claude/
+
+# macOS Finder metadata
+**/.DS_Store
+
+# Python bytecode caches
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Generated / regenerable data files
+**/data/
+**/train_data.csv
+**/trade_data.csv
+**/df_actions.csv
+**/df_daily_return.csv
+**/*.pkl
