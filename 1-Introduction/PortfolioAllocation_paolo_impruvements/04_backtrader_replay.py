@@ -21,8 +21,10 @@ import json
 from pathlib import Path
 
 import backtrader as bt
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from finrl.meta.preprocessor.yahoodownloader import YahooDownloader
 
 from utils import ALGO_REGISTRY, load_config, project_root
 
@@ -249,7 +251,7 @@ def _coerce_for_json(o):
 
 
 def export_outputs(strat: RLPortfolioStrategy, cerebro: bt.Cerebro,
-                   bt_cfg: dict, out_dir: Path) -> None:
+                   bt_cfg: dict, src_cfg: dict, out_dir: Path) -> None:
     eq_df = pd.DataFrame(strat.equity_curve, columns=["date", "equity"]).set_index("date")
     eq_path = out_dir / bt_cfg["output"]["equity_csv"]
     eq_df.to_csv(eq_path)
@@ -295,16 +297,45 @@ def export_outputs(strat: RLPortfolioStrategy, cerebro: bt.Cerebro,
             print(f"Could not export transactions analyzer: {e}")
 
     if bt_cfg["output"]["plot"]["enabled"]:
+        # Cerebro's default plot allocates one subplot per data feed; with
+        # 27 tickers in a portfolio strategy the output is unreadable. We
+        # render a clean strategy-level equity curve instead.
         try:
-            figs = cerebro.plot(
-                style=bt_cfg["output"]["plot"]["style"],
-                volume=bt_cfg["output"]["plot"]["show_volume"],
-                iplot=False,
-            )
-            if figs and figs[0]:
-                fig_path = out_dir / bt_cfg["output"]["plot"]["filename"]
-                figs[0][0].savefig(fig_path, dpi=120)
-                print(f"Saved {fig_path}")
+            eq = pd.DataFrame(strat.equity_curve, columns=["date", "equity"])
+            eq["date"] = pd.to_datetime(eq["date"])
+            eq = eq.set_index("date").sort_index()
+
+            fig, ax = plt.subplots(figsize=(12, 5))
+            ax.plot(eq.index, eq["equity"], label="A2C (backtrader replay)",
+                    linewidth=1.5)
+
+            # Optional DJIA overlay, rescaled to the strategy's starting equity.
+            if bt_cfg["output"]["plot"].get("overlay_djia", True):
+                try:
+                    ticker = src_cfg["baselines"].get("dji_ticker", "^DJI")
+                    start  = eq.index.min().strftime("%Y-%m-%d")
+                    # YahooDownloader treats end_date as exclusive; pad by one day.
+                    end    = (eq.index.max() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+                    dji = YahooDownloader(start_date=start, end_date=end,
+                                          ticker_list=[ticker]).fetch_data()[["date", "close"]]
+                    dji["date"] = pd.to_datetime(dji["date"])
+                    dji = dji.set_index("date").sort_index()
+                    scale = bt_cfg["broker"]["initial_cash"] / float(dji["close"].iloc[0])
+                    ax.plot(dji.index, dji["close"] * scale, label=ticker,
+                            linewidth=1.2, alpha=0.85, linestyle="--")
+                except Exception as e:
+                    print(f"DJIA overlay failed (non-fatal): {e}")
+
+            ax.set_title("Portfolio Equity - Backtrader Replay")
+            ax.set_ylabel("Portfolio Value ($)")
+            ax.set_xlabel("Date")
+            ax.grid(True, linestyle="--", alpha=0.4)
+            ax.legend(loc="best")
+            fig.tight_layout()
+            fig_path = out_dir / bt_cfg["output"]["plot"]["filename"]
+            fig.savefig(fig_path, dpi=120)
+            plt.close(fig)
+            print(f"Saved {fig_path}")
         except Exception as e:
             print(f"Plot failed (non-fatal): {e}")
 
@@ -417,7 +448,7 @@ def main() -> None:
     strat = results[0]
     final_value = cerebro.broker.getvalue()
 
-    export_outputs(strat, cerebro, bt_cfg, out_dir)
+    export_outputs(strat, cerebro, bt_cfg, src_cfg, out_dir)
     print_summary(strat, initial_value, final_value)
 
 

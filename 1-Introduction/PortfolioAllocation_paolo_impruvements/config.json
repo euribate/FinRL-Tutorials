@@ -28,7 +28,7 @@
 
   "models": {
     "a2c": {
-      "use": true,
+      "use": false,
       "total_timesteps": 50000,
       "model_kwargs": {
         "n_steps": 5,
@@ -38,7 +38,7 @@
       "policy_kwargs": null
     },
     "ppo": {
-      "use": false,
+      "use": true,
       "total_timesteps": 80000,
       "model_kwargs": {
         "n_steps": 2048,

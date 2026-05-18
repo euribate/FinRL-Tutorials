@@ -60,7 +60,7 @@
     "drawdown":       {"enabled": true},
     "returns":        {"enabled": true,  "tann": 252},
     "trade_analyzer": {"enabled": true},
-    "annual_return":  {"enabled": true},
+    "annual_return":  {"enabled": false, "_notes": "Requires the default broker observer; conflicts with cerebro(stdstats=False). The Returns analyzer above already provides annualized return via tann=252."},
     "transactions":   {"enabled": true},
     "position_value": {"enabled": false},
     "pyfolio":        {"enabled": false, "_notes": "Requires pyfolio installed; emits returns/positions/transactions DataFrames."}
@@ -73,10 +73,10 @@
     "trade_log_csv":    "trade_log.csv",
     "summary_json":     "summary.json",
     "plot": {
-      "enabled":   true,
-      "filename":  "backtrader_plot.png",
-      "style":     "candle",
-      "show_volume": false
+      "enabled":      true,
+      "filename":     "backtrader_plot.png",
+      "overlay_djia": true,
+      "_notes": "Renders a clean strategy-level equity curve via matplotlib. Cerebro's default plot is not used because it produces one subplot per data feed (27 subplots for a portfolio strategy). overlay_djia rescales source_config.baselines.dji_ticker to the strategy's starting equity and dashes it on the same axes."
     }
   },
 

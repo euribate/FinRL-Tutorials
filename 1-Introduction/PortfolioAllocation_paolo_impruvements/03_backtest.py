@@ -77,7 +77,10 @@ def compute_min_variance_baseline(trade_df: pd.DataFrame, initial: float,
         weights = ef.clean_weights()
 
         cap = float(portfolio.iloc[i])
-        cash_per_stock = np.array([cap * weights[k] for k in range(len(weights))])
+        # clean_weights() returns {ticker: weight}; values() preserves the
+        # ticker ordering of Sigma's columns, which matches df_temp.close
+        # (both alphabetical, since preprocessing sorts by ['date', 'tic']).
+        cash_per_stock = np.array([cap * w for w in weights.values()])
         shares = cash_per_stock / np.array(df_temp.close, dtype=float)
         next_prices = np.array(df_temp_next.close, dtype=float)
         portfolio.iloc[i + 1] = float(np.dot(shares, next_prices))

@@ -43,6 +43,9 @@ def main() -> None:
 
     model_dir = resolve_path(config, "model_dir")
     tb_dir    = resolve_path(config, "tensorboard_dir")
+    # StockPortfolioEnv.step() hard-codes plt.savefig("results/...") on the
+    # terminal step, so ensure a results/ dir exists relative to cwd before training.
+    resolve_path(config, "results_dir")
     seed      = config.get("training", {}).get("seed", 42)
 
     algos = enabled_models(config)
