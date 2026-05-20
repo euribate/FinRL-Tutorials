@@ -1,0 +1,98 @@
+[
+  {
+    "timesteps": 5000,
+    "sharpe": 1.7411972860858929,
+    "improved": true,
+    "best_so_far": 1.7411972860858929
+  },
+  {
+    "timesteps": 10000,
+    "sharpe": 1.7220522618242948,
+    "improved": false,
+    "best_so_far": 1.7411972860858929
+  },
+  {
+    "timesteps": 15000,
+    "sharpe": 1.676520928216731,
+    "improved": false,
+    "best_so_far": 1.7411972860858929
+  },
+  {
+    "timesteps": 20000,
+    "sharpe": 1.7282067791141802,
+    "improved": false,
+    "best_so_far": 1.7411972860858929
+  },
+  {
+    "timesteps": 25000,
+    "sharpe": 1.739989631820316,
+    "improved": false,
+    "best_so_far": 1.7411972860858929
+  },
+  {
+    "timesteps": 30000,
+    "sharpe": 1.7487391893887143,
+    "improved": false,
+    "best_so_far": 1.7411972860858929
+  },
+  {
+    "timesteps": 35000,
+    "sharpe": 1.7341336614258664,
+    "improved": false,
+    "best_so_far": 1.7411972860858929
+  },
+  {
+    "timesteps": 40000,
+    "sharpe": 1.7596027830033856,
+    "improved": true,
+    "best_so_far": 1.7596027830033856
+  },
+  {
+    "timesteps": 45000,
+    "sharpe": 1.7633744031103076,
+    "improved": false,
+    "best_so_far": 1.7596027830033856
+  },
+  {
+    "timesteps": 50000,
+    "sharpe": 1.7336743138453214,
+    "improved": false,
+    "best_so_far": 1.7596027830033856
+  },
+  {
+    "timesteps": 55000,
+    "sharpe": 1.7240783703473768,
+    "improved": false,
+    "best_so_far": 1.7596027830033856
+  },
+  {
+    "timesteps": 60000,
+    "sharpe": 1.7443035133620537,
+    "improved": false,
+    "best_so_far": 1.7596027830033856
+  },
+  {
+    "timesteps": 65000,
+    "sharpe": 1.7446055860374594,
+    "improved": false,
+    "best_so_far": 1.7596027830033856
+  },
+  {
+    "timesteps": 70000,
+    "sharpe": 1.7861355402833676,
+    "improved": true,
+    "best_so_far": 1.7861355402833676
+  },
+  {
+    "timesteps": 75000,
+    "sharpe": 1.7606954558655994,
+    "improved": false,
+    "best_so_far": 1.7861355402833676
+  },
+  {
+    "timesteps": 80000,
+    "sharpe": 1.7453496408035358,
+    "improved": false,
+    "best_so_far": 1.7861355402833676
+  }
+]

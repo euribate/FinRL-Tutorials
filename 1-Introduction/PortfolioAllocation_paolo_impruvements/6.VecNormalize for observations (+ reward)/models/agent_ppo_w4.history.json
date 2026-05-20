@@ -1,0 +1,98 @@
+[
+  {
+    "timesteps": 5000,
+    "sharpe": 0.11695021928622752,
+    "improved": true,
+    "best_so_far": 0.11695021928622752
+  },
+  {
+    "timesteps": 10000,
+    "sharpe": 0.12078679297620735,
+    "improved": false,
+    "best_so_far": 0.11695021928622752
+  },
+  {
+    "timesteps": 15000,
+    "sharpe": 0.12490339398251436,
+    "improved": false,
+    "best_so_far": 0.11695021928622752
+  },
+  {
+    "timesteps": 20000,
+    "sharpe": 0.13185456525143313,
+    "improved": true,
+    "best_so_far": 0.13185456525143313
+  },
+  {
+    "timesteps": 25000,
+    "sharpe": 0.12395725171693361,
+    "improved": false,
+    "best_so_far": 0.13185456525143313
+  },
+  {
+    "timesteps": 30000,
+    "sharpe": 0.12320580408496389,
+    "improved": false,
+    "best_so_far": 0.13185456525143313
+  },
+  {
+    "timesteps": 35000,
+    "sharpe": 0.18522690339974873,
+    "improved": true,
+    "best_so_far": 0.18522690339974873
+  },
+  {
+    "timesteps": 40000,
+    "sharpe": 0.21353677440527513,
+    "improved": true,
+    "best_so_far": 0.21353677440527513
+  },
+  {
+    "timesteps": 45000,
+    "sharpe": 0.14240825227289283,
+    "improved": false,
+    "best_so_far": 0.21353677440527513
+  },
+  {
+    "timesteps": 50000,
+    "sharpe": 0.11873330740162567,
+    "improved": false,
+    "best_so_far": 0.21353677440527513
+  },
+  {
+    "timesteps": 55000,
+    "sharpe": 0.1489507379322506,
+    "improved": false,
+    "best_so_far": 0.21353677440527513
+  },
+  {
+    "timesteps": 60000,
+    "sharpe": 0.1051985216908536,
+    "improved": false,
+    "best_so_far": 0.21353677440527513
+  },
+  {
+    "timesteps": 65000,
+    "sharpe": 0.11652301453736148,
+    "improved": false,
+    "best_so_far": 0.21353677440527513
+  },
+  {
+    "timesteps": 70000,
+    "sharpe": 0.14206620812577977,
+    "improved": false,
+    "best_so_far": 0.21353677440527513
+  },
+  {
+    "timesteps": 75000,
+    "sharpe": 0.12579044535650824,
+    "improved": false,
+    "best_so_far": 0.21353677440527513
+  },
+  {
+    "timesteps": 80000,
+    "sharpe": 0.10562773510053962,
+    "improved": false,
+    "best_so_far": 0.21353677440527513
+  }
+]

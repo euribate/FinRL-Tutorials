@@ -1,0 +1,106 @@
+{
+  "data": {
+    "ticker_list": [
+      "AAPL", "AMGN", "AXP", "BA",  "CAT", "CRM", "CSCO", "CVX", "DIS", "DOW",
+      "GS",   "HD",   "HON", "IBM", "INTC","JNJ", "JPM",  "KO",  "MCD", "MMM",
+      "MRK",  "MSFT", "NKE", "PG",  "TRV", "UNH", "V",    "VZ",  "WBA", "WMT"
+    ],
+    "download_start_date": "2008-01-01",
+    "train_start_date":    "2009-01-01",
+    "train_end_date":      "2020-07-01",
+    "trade_start_date":    "2020-07-01",
+    "trade_end_date":      "2021-10-31",
+    "indicators": [
+      "macd", "boll_ub", "boll_lb",
+      "rsi_30", "cci_30", "dx_30",
+      "close_30_sma", "close_60_sma"
+    ],
+    "lookback": 252,
+    "use_turbulence": false
+  },
+
+  "env": {
+    "hmax": 100,
+    "initial_amount": 1000000,
+    "transaction_cost_pct": 0.001,
+    "reward_scaling": 1.0,
+    "reward_mode": "log_return",
+    "transaction_cost_penalty": 0.005,
+    "_reward_mode_notes": "'value' = upstream StockPortfolioEnv (reward = portfolio value, non-stationary, dominates late-period training samples). 'log_return' = LogReturnPortfolioEnv (reward = log(1 + portfolio_return) * reward_scaling). reward_scaling=1.0 is the recommended default for log_return mode; 1e-4 would shrink the signal to ~1e-6 and starve the gradient.",
+    "_transaction_cost_penalty_notes": "Per-unit-turnover cost rate used to shape the reward when reward_mode='log_return'. Math: turnover = |w_t - w_{t-1}|.sum(); tc_fraction = transaction_cost_penalty * turnover; net_return = (1 + gross)*(1 - tc_fraction) - 1; reward = log(1 + net_return) * reward_scaling. Set to 0.0 to disable the penalty entirely - the env then behaves identically to ../1.reward_returns/. The default 0.001 matches the broker-level commission used in backtrader_config.json (stage 4 still applies its own broker costs independently; the two cost models do not double-count because they live in different layers)."
+  },
+
+  "models": {
+    "a2c": {
+      "use": false,
+      "total_timesteps": 50000,
+      "model_kwargs": {
+        "n_steps": 5,
+        "ent_coef": 0.005,
+        "learning_rate": 0.0002
+      },
+      "policy_kwargs": null
+    },
+    "ppo": {
+      "use": true,
+      "total_timesteps": 150000,
+      "model_kwargs": {
+        "n_steps": 2048,
+        "ent_coef": 0.005,
+        "learning_rate": 0.0001,
+        "batch_size": 128
+      },
+      "policy_kwargs": null
+    },
+    "ddpg": {
+      "use": false,
+      "total_timesteps": 50000,
+      "model_kwargs": {
+        "batch_size": 128,
+        "buffer_size": 50000,
+        "learning_rate": 0.001
+      },
+      "policy_kwargs": null
+    },
+    "sac": {
+      "use": false,
+      "total_timesteps": 50000,
+      "model_kwargs": {
+        "batch_size": 128,
+        "buffer_size": 100000,
+        "learning_rate": 0.0003,
+        "learning_starts": 100,
+        "ent_coef": "auto_0.1"
+      },
+      "policy_kwargs": null
+    },
+    "td3": {
+      "use": false,
+      "total_timesteps": 30000,
+      "model_kwargs": {
+        "batch_size": 100,
+        "buffer_size": 1000000,
+        "learning_rate": 0.001
+      },
+      "policy_kwargs": null
+    }
+  },
+
+  "training": {
+    "seed": 42
+  },
+
+  "baselines": {
+    "min_variance": {
+      "weight_bounds": [0, 0.1]
+    },
+    "dji_ticker": "^DJI"
+  },
+
+  "paths": {
+    "data_dir":        "data",
+    "model_dir":       "models",
+    "results_dir":     "results",
+    "tensorboard_dir": "tensorboard"
+  }
+}

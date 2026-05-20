@@ -1,0 +1,30 @@
+{
+  "_description": "Stage 5 - QuantStats HTML tearsheet from a strategy equity curve.",
+
+  "source_config": "backtrader_config.json",
+
+  "inputs": {
+    "equity_csv": "results_backtrader/equity_backtrader.csv",
+    "_notes": "CSV with two columns: date (index) and equity. Defaults to the backtrader replay output. Path is resolved relative to the project directory unless absolute."
+  },
+
+  "benchmark": {
+    "use_source": true,
+    "ticker":     null,
+    "_notes": "When use_source=true, the benchmark ticker is read from the main config's baselines.dji_ticker. Set use_source=false and provide a ticker (e.g. '^DJI', '^GSPC', 'SPY') here to override."
+  },
+
+  "output": {
+    "report_dir":    "results_quantstats",
+    "html_filename": "report.html",
+    "metrics_csv":   "metrics.csv",
+    "_notes": "report_dir is resolved relative to the project directory. Set metrics_csv to null to skip the metrics export."
+  },
+
+  "report": {
+    "strategy_name": "A2C Portfolio",
+    "title":         "A2C Portfolio Allocation - QuantStats Tearsheet",
+    "risk_free_rate": 0.0,
+    "_notes": "strategy_name is the column label QuantStats uses in the report. title is the HTML <title>. risk_free_rate is annualised, used in Sharpe/Sortino calculations."
+  }
+}

@@ -1,0 +1,98 @@
+[
+  {
+    "timesteps": 5000,
+    "sharpe": 4.706222645453689,
+    "improved": true,
+    "best_so_far": 4.706222645453689
+  },
+  {
+    "timesteps": 10000,
+    "sharpe": 4.708853972773656,
+    "improved": false,
+    "best_so_far": 4.706222645453689
+  },
+  {
+    "timesteps": 15000,
+    "sharpe": 4.712195419677535,
+    "improved": false,
+    "best_so_far": 4.706222645453689
+  },
+  {
+    "timesteps": 20000,
+    "sharpe": 4.727692694460581,
+    "improved": true,
+    "best_so_far": 4.727692694460581
+  },
+  {
+    "timesteps": 25000,
+    "sharpe": 4.740278613674993,
+    "improved": true,
+    "best_so_far": 4.740278613674993
+  },
+  {
+    "timesteps": 30000,
+    "sharpe": 4.746711116899874,
+    "improved": false,
+    "best_so_far": 4.740278613674993
+  },
+  {
+    "timesteps": 35000,
+    "sharpe": 4.7593999535317595,
+    "improved": true,
+    "best_so_far": 4.7593999535317595
+  },
+  {
+    "timesteps": 40000,
+    "sharpe": 4.640036996833576,
+    "improved": false,
+    "best_so_far": 4.7593999535317595
+  },
+  {
+    "timesteps": 45000,
+    "sharpe": 4.631796809695349,
+    "improved": false,
+    "best_so_far": 4.7593999535317595
+  },
+  {
+    "timesteps": 50000,
+    "sharpe": 4.74491310705796,
+    "improved": false,
+    "best_so_far": 4.7593999535317595
+  },
+  {
+    "timesteps": 55000,
+    "sharpe": 4.772184263707031,
+    "improved": true,
+    "best_so_far": 4.772184263707031
+  },
+  {
+    "timesteps": 60000,
+    "sharpe": 4.813436832877114,
+    "improved": true,
+    "best_so_far": 4.813436832877114
+  },
+  {
+    "timesteps": 65000,
+    "sharpe": 4.851224956376876,
+    "improved": true,
+    "best_so_far": 4.851224956376876
+  },
+  {
+    "timesteps": 70000,
+    "sharpe": 4.8098311680105486,
+    "improved": false,
+    "best_so_far": 4.851224956376876
+  },
+  {
+    "timesteps": 75000,
+    "sharpe": 4.692458980092197,
+    "improved": false,
+    "best_so_far": 4.851224956376876
+  },
+  {
+    "timesteps": 80000,
+    "sharpe": 4.694292057240593,
+    "improved": false,
+    "best_so_far": 4.851224956376876
+  }
+]
