@@ -267,15 +267,25 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
          * "diff_sortino" = differential Sortino-style ratio that only
                             penalises downside variance
 
-    2. (Improvement #2) Optional transaction-cost penalty: when `tc_penalty > 0`,
-       a per-unit-turnover cost is subtracted from both the reward AND from the
-       book equity (portfolio_value / asset_memory / portfolio_return_memory),
-       so that downstream consumers (stage 3's DRL_prediction, equity plot,
-       QuantStats tearsheet) reflect realistic post-cost performance.
+    2. (Improvement #2, drift-adjusted in folder 8) Transaction-cost penalty
+       on the REAL rebalancing required to maintain target weights, not on
+       the change in target weights. Subtracted from both the reward AND
+       the book equity (portfolio_value / asset_memory / portfolio_return_memory)
+       so downstream consumers see realistic post-cost performance and the
+       stage-3 (env) equity curve aligns with stage-4 (backtrader replay).
 
-       Math: turnover    = |weights_t - weights_{t-1}|.sum()
+       Math: w_drift_i  = w_prev_i * (1 + r_i) / (1 + R)
+             turnover   = |w_target - w_drift|.sum()
              tc_fraction = tc_penalty * turnover
              net_return  = (1 + gross_return) * (1 - tc_fraction) - 1
+
+       where r_i is the per-ticker return for the bar and R is the portfolio
+       gross return. The drift correction makes a buy-and-hold strategy
+       (constant target weights) correctly INCUR cost for the daily
+       rebalancing required to maintain those weights against price drift -
+       matching what a real broker charges. Prior folders (3-7) used the
+       naive |w_target - w_prev_target| formula which under-charged cost and
+       caused a large stage-3/stage-4 friction gap.
 
     3. (Improvement #4) Differential Sharpe / Sortino. After computing the
        (possibly cost-adjusted) effective return r_t, the env maintains running
@@ -365,13 +375,37 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         gross_return     = float(self.portfolio_return_memory[-1])
         effective_return = gross_return
 
-        # Apply transaction-cost penalty (improvement #2). actions_memory was
-        # initialised by the parent with [[1/N]*N] and then appended this step's
-        # weights, so [-2] is always available from step 1 onward.
-        if self.tc_penalty > 0.0 and len(self.actions_memory) >= 2:
-            w_curr = np.asarray(self.actions_memory[-1], dtype=float)
-            w_prev = np.asarray(self.actions_memory[-2], dtype=float)
-            turnover    = float(np.abs(w_curr - w_prev).sum())
+        # Improvement #2 (drift-adjusted, folder 8): transaction-cost penalty
+        # on the REAL rebalancing required to maintain the agent's target
+        # weights, not on the change in target weights.
+        #
+        # Before this fix, turnover was computed as |w_target - w_prev_target|,
+        # which IGNORED the natural weight drift caused by per-ticker price
+        # moves. A buy-and-hold strategy showed zero turnover in the env even
+        # though backtrader has to rebalance daily to track the constant
+        # targets - producing a large stage-3-vs-stage-4 friction gap.
+        #
+        # The drift-adjusted formula computes the weight vector at the START
+        # of the current bar (post per-ticker return, pre-rebalance):
+        #     w_drift_i = w_prev_i * (1 + r_i) / (1 + R)
+        # where r_i is the per-ticker simple return for the bar and R is the
+        # portfolio gross return. Real turnover required to reach the agent's
+        # new target is |w_target - w_drift|.sum() - matches backtrader's
+        # commission base exactly (modulo integer-share rounding).
+        if self.tc_penalty > 0.0 and len(self.actions_memory) >= 2 and self.day > 0:
+            w_target = np.asarray(self.actions_memory[-1], dtype=float)
+            w_prev   = np.asarray(self.actions_memory[-2], dtype=float)
+            prev_close = self.df.loc[self.day - 1, "close"].values.astype(float)
+            curr_close = self.data["close"].values.astype(float)
+            growth     = curr_close / prev_close
+            drifted    = w_prev * growth
+            total      = float(drifted.sum())
+            if total > 0.0:
+                w_drift = drifted / total
+            else:
+                # Starting from cash (all zeros) - no drift to apply.
+                w_drift = w_prev
+            turnover    = float(np.abs(w_target - w_drift).sum())
             tc_fraction = self.tc_penalty * turnover
             effective_return = (1.0 + gross_return) * (1.0 - tc_fraction) - 1.0
             self.portfolio_return_memory[-1] = effective_return

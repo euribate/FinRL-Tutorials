@@ -1,0 +1,182 @@
+[
+  {
+    "timesteps": 5000,
+    "sharpe": -1.0882471242263374,
+    "improved": true,
+    "best_so_far": -1.0882471242263374
+  },
+  {
+    "timesteps": 10000,
+    "sharpe": -1.071555471330386,
+    "improved": true,
+    "best_so_far": -1.071555471330386
+  },
+  {
+    "timesteps": 15000,
+    "sharpe": -1.0408228661019898,
+    "improved": true,
+    "best_so_far": -1.0408228661019898
+  },
+  {
+    "timesteps": 20000,
+    "sharpe": -1.0235844787212787,
+    "improved": true,
+    "best_so_far": -1.0235844787212787
+  },
+  {
+    "timesteps": 25000,
+    "sharpe": -1.0529672065584637,
+    "improved": false,
+    "best_so_far": -1.0235844787212787
+  },
+  {
+    "timesteps": 30000,
+    "sharpe": -1.0477032345439796,
+    "improved": false,
+    "best_so_far": -1.0235844787212787
+  },
+  {
+    "timesteps": 35000,
+    "sharpe": -1.0401964765534872,
+    "improved": false,
+    "best_so_far": -1.0235844787212787
+  },
+  {
+    "timesteps": 40000,
+    "sharpe": -1.0906943215949123,
+    "improved": false,
+    "best_so_far": -1.0235844787212787
+  },
+  {
+    "timesteps": 45000,
+    "sharpe": -1.0300229723458094,
+    "improved": false,
+    "best_so_far": -1.0235844787212787
+  },
+  {
+    "timesteps": 50000,
+    "sharpe": -0.9735906320925023,
+    "improved": true,
+    "best_so_far": -0.9735906320925023
+  },
+  {
+    "timesteps": 55000,
+    "sharpe": -0.9159414206885073,
+    "improved": true,
+    "best_so_far": -0.9159414206885073
+  },
+  {
+    "timesteps": 60000,
+    "sharpe": -0.9375776915075398,
+    "improved": false,
+    "best_so_far": -0.9159414206885073
+  },
+  {
+    "timesteps": 65000,
+    "sharpe": -0.9512606279346149,
+    "improved": false,
+    "best_so_far": -0.9159414206885073
+  },
+  {
+    "timesteps": 70000,
+    "sharpe": -0.9589990601491378,
+    "improved": false,
+    "best_so_far": -0.9159414206885073
+  },
+  {
+    "timesteps": 75000,
+    "sharpe": -0.9572325868090666,
+    "improved": false,
+    "best_so_far": -0.9159414206885073
+  },
+  {
+    "timesteps": 80000,
+    "sharpe": -0.9441303137044134,
+    "improved": false,
+    "best_so_far": -0.9159414206885073
+  },
+  {
+    "timesteps": 85000,
+    "sharpe": -0.8317116947589829,
+    "improved": true,
+    "best_so_far": -0.8317116947589829
+  },
+  {
+    "timesteps": 90000,
+    "sharpe": -0.8548701914228972,
+    "improved": false,
+    "best_so_far": -0.8317116947589829
+  },
+  {
+    "timesteps": 95000,
+    "sharpe": -0.8290228710072339,
+    "improved": false,
+    "best_so_far": -0.8317116947589829
+  },
+  {
+    "timesteps": 100000,
+    "sharpe": -0.8096199514182241,
+    "improved": true,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 105000,
+    "sharpe": -0.8841673524907474,
+    "improved": false,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 110000,
+    "sharpe": -0.8421510059374747,
+    "improved": false,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 115000,
+    "sharpe": -0.8181651227179755,
+    "improved": false,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 120000,
+    "sharpe": -0.844504520696675,
+    "improved": false,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 125000,
+    "sharpe": -0.8980326173665237,
+    "improved": false,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 130000,
+    "sharpe": -0.8623158007598001,
+    "improved": false,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 135000,
+    "sharpe": -0.8679879854768824,
+    "improved": false,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 140000,
+    "sharpe": -0.8786879639322177,
+    "improved": false,
+    "best_so_far": -0.8096199514182241
+  },
+  {
+    "timesteps": 145000,
+    "sharpe": -0.797038764665568,
+    "improved": true,
+    "best_so_far": -0.797038764665568
+  },
+  {
+    "timesteps": 150000,
+    "sharpe": -0.8267040654280363,
+    "improved": false,
+    "best_so_far": -0.797038764665568
+  }
+]

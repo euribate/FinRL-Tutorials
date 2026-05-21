@@ -1,9 +1,11 @@
   {
   "data": {
     "ticker_list": [
-      "IVE", "QQQ", "TLT", "SHY", "LQD", "HYG", "GLD", "EEM", "VNQ", "XLE"
+      "AAPL", "AMGN", "AXP", "BA",  "CAT", "CRM", "CSCO", "CVX", "DIS", "DOW",
+      "GS",   "HD",   "HON", "IBM", "INTC","JNJ", "JPM",  "KO",  "MCD", "MMM",
+      "MRK",  "MSFT", "NKE", "PG",  "TRV", "UNH", "V",    "VZ",  "WBA", "WMT"
     ],
-    "download_start_date": "2007-04-01",
+    "download_start_date": "2008-01-01",
     "train_start_date":    "2009-01-01",
     "train_end_date":      "2020-07-01",
     "trade_start_date":    "2020-07-01",
@@ -23,10 +25,10 @@
     "transaction_cost_pct": 0.001,
     "reward_scaling": 1.0,
     "reward_mode": "diff_sharpe",
-    "transaction_cost_penalty": 0.0015,
+    "transaction_cost_penalty": 0.00,
     "diff_ratio_eta": 0.00396825,
     "_reward_mode_notes": "'value' = upstream StockPortfolioEnv (reward = portfolio value). 'log_return' = log(1 + return) * reward_scaling. 'diff_sharpe' = Moody & Saffell differential Sharpe ratio (per-step contribution to running Sharpe, using EMAs of return and squared return). 'diff_sortino' = differential Sortino variant using only downside second moment. The differential ratios train the agent to optimise a running risk-adjusted return rather than raw return - they care about variance / downside variance directly instead of relying on the policy to discover it from the value function.",
-    "_transaction_cost_penalty_notes": "Per-unit-turnover cost rate, where 'turnover' is now DRIFT-ADJUSTED (folder 8 only - earlier folders used a naive formula that under-charged). Math: w_drift_i = w_prev_i * (1+r_i)/(1+R); turnover = |w_target - w_drift|.sum(); tc_fraction = transaction_cost_penalty * turnover; net_return = (1 + gross)*(1 - tc_fraction) - 1. This makes the env's cost model match backtrader's commission base exactly - a buy-and-hold strategy now correctly incurs cost for the rebalancing required to maintain target weights against per-ticker price drift, instead of showing zero turnover as it did in earlier folders. To align with backtrader, set transaction_cost_penalty = broker.commission.value + broker.slippage.value (i.e., 0.0015 if commission=0.001 and slippage=0.0005). Set to 0.0 to disable.",
+    "_transaction_cost_penalty_notes": "Per-unit-turnover cost rate applied for any shaped reward (log_return / diff_sharpe / diff_sortino). Math: turnover = |w_t - w_{t-1}|.sum(); tc_fraction = transaction_cost_penalty * turnover; net_return = (1 + gross)*(1 - tc_fraction) - 1; the differential ratios are then computed on net_return. Set to 0.0 to disable.",
     "_diff_ratio_eta_notes": "EMA decay for the running A (mean return), B (mean R^2), D (mean downside R^2) moments used by diff_sharpe and diff_sortino. Default 1/252 = 0.00396825 corresponds to a one-trading-year half-life. Larger eta = faster adaptation but more noise; smaller = smoother but slower to track regime changes. Has no effect when reward_mode is 'value' or 'log_return'."
   },
 
@@ -107,7 +109,7 @@
 
   "baselines": {
     "min_variance": {
-      "weight_bounds": [0, 0.3]
+      "weight_bounds": [0, 0.1]
     },
     "dji_ticker": "^DJI"
   },
@@ -143,7 +145,7 @@
   "normalization": {
     "enabled":     true,
     "norm_obs":    true,
-    "norm_reward": false,
+    "norm_reward": true,
     "clip_obs":    10.0,
     "clip_reward": 10.0,
     "epsilon":     1e-8,

@@ -1,0 +1,182 @@
+[
+  {
+    "timesteps": 5000,
+    "sharpe": -0.9515755941466009,
+    "improved": true,
+    "best_so_far": -0.9515755941466009
+  },
+  {
+    "timesteps": 10000,
+    "sharpe": -0.8863348724580445,
+    "improved": true,
+    "best_so_far": -0.8863348724580445
+  },
+  {
+    "timesteps": 15000,
+    "sharpe": -0.8706729137772534,
+    "improved": true,
+    "best_so_far": -0.8706729137772534
+  },
+  {
+    "timesteps": 20000,
+    "sharpe": -0.8879600464430546,
+    "improved": false,
+    "best_so_far": -0.8706729137772534
+  },
+  {
+    "timesteps": 25000,
+    "sharpe": -0.907727498445643,
+    "improved": false,
+    "best_so_far": -0.8706729137772534
+  },
+  {
+    "timesteps": 30000,
+    "sharpe": -0.7802171239581294,
+    "improved": true,
+    "best_so_far": -0.7802171239581294
+  },
+  {
+    "timesteps": 35000,
+    "sharpe": -0.7324219982331098,
+    "improved": true,
+    "best_so_far": -0.7324219982331098
+  },
+  {
+    "timesteps": 40000,
+    "sharpe": -0.6738123692275244,
+    "improved": true,
+    "best_so_far": -0.6738123692275244
+  },
+  {
+    "timesteps": 45000,
+    "sharpe": -0.6802315896407255,
+    "improved": false,
+    "best_so_far": -0.6738123692275244
+  },
+  {
+    "timesteps": 50000,
+    "sharpe": -0.7874067981363435,
+    "improved": false,
+    "best_so_far": -0.6738123692275244
+  },
+  {
+    "timesteps": 55000,
+    "sharpe": -0.7208787315683088,
+    "improved": false,
+    "best_so_far": -0.6738123692275244
+  },
+  {
+    "timesteps": 60000,
+    "sharpe": -0.6456807238217781,
+    "improved": true,
+    "best_so_far": -0.6456807238217781
+  },
+  {
+    "timesteps": 65000,
+    "sharpe": -0.6915926395763771,
+    "improved": false,
+    "best_so_far": -0.6456807238217781
+  },
+  {
+    "timesteps": 70000,
+    "sharpe": -0.5935363090610534,
+    "improved": true,
+    "best_so_far": -0.5935363090610534
+  },
+  {
+    "timesteps": 75000,
+    "sharpe": -0.45800157833899546,
+    "improved": true,
+    "best_so_far": -0.45800157833899546
+  },
+  {
+    "timesteps": 80000,
+    "sharpe": -0.48327028383140364,
+    "improved": false,
+    "best_so_far": -0.45800157833899546
+  },
+  {
+    "timesteps": 85000,
+    "sharpe": -0.5500003314377958,
+    "improved": false,
+    "best_so_far": -0.45800157833899546
+  },
+  {
+    "timesteps": 90000,
+    "sharpe": -0.5481722230336131,
+    "improved": false,
+    "best_so_far": -0.45800157833899546
+  },
+  {
+    "timesteps": 95000,
+    "sharpe": -0.596221144604633,
+    "improved": false,
+    "best_so_far": -0.45800157833899546
+  },
+  {
+    "timesteps": 100000,
+    "sharpe": -0.5309070834022753,
+    "improved": false,
+    "best_so_far": -0.45800157833899546
+  },
+  {
+    "timesteps": 105000,
+    "sharpe": -0.4470894113296856,
+    "improved": true,
+    "best_so_far": -0.4470894113296856
+  },
+  {
+    "timesteps": 110000,
+    "sharpe": -0.4270836257519323,
+    "improved": true,
+    "best_so_far": -0.4270836257519323
+  },
+  {
+    "timesteps": 115000,
+    "sharpe": -0.44059999691174984,
+    "improved": false,
+    "best_so_far": -0.4270836257519323
+  },
+  {
+    "timesteps": 120000,
+    "sharpe": -0.4607303081499734,
+    "improved": false,
+    "best_so_far": -0.4270836257519323
+  },
+  {
+    "timesteps": 125000,
+    "sharpe": -0.5740114358187678,
+    "improved": false,
+    "best_so_far": -0.4270836257519323
+  },
+  {
+    "timesteps": 130000,
+    "sharpe": -0.44489892325767133,
+    "improved": false,
+    "best_so_far": -0.4270836257519323
+  },
+  {
+    "timesteps": 135000,
+    "sharpe": -0.4171359357688713,
+    "improved": false,
+    "best_so_far": -0.4270836257519323
+  },
+  {
+    "timesteps": 140000,
+    "sharpe": -0.4468927118317209,
+    "improved": false,
+    "best_so_far": -0.4270836257519323
+  },
+  {
+    "timesteps": 145000,
+    "sharpe": -0.47407009767699065,
+    "improved": false,
+    "best_so_far": -0.4270836257519323
+  },
+  {
+    "timesteps": 150000,
+    "sharpe": -0.53492500248592,
+    "improved": false,
+    "best_so_far": -0.4270836257519323
+  }
+]
