@@ -194,9 +194,21 @@ def split_train_validation(train_df: pd.DataFrame,
     Reserves the LAST `val_fraction` of unique trading dates for validation.
     Re-factorises the integer index of each slice so the env's `df.loc[day]`
     lookup works (the env expects a dense 0..N-1 day index).
+
+    Friendly warnings when val_fraction is unusual:
+      * < 0.05  -> too small, Sharpe estimate becomes noisy.
+      * > 0.30  -> too large, train_only shrinks materially.
+    See walk_forward_time_split_and_early_stopping.md at the project root for
+    detailed guidance on choosing this value.
     """
     if not 0.0 < val_fraction < 1.0:
         raise ValueError(f"val_fraction must be in (0, 1); got {val_fraction}.")
+    if val_fraction < 0.05:
+        print(f"  NOTE: val_fraction={val_fraction} is small (<5%). "
+              f"Validation Sharpe may be too noisy for reliable ES decisions.")
+    elif val_fraction > 0.30:
+        print(f"  NOTE: val_fraction={val_fraction} is large (>30%). "
+              f"train_only loses a lot of data; PPO may underfit.")
     dates = pd.Index(train_df["date"].unique()).sort_values()
     n_val = max(int(round(len(dates) * val_fraction)), 1)
     cut_date = dates[len(dates) - n_val]

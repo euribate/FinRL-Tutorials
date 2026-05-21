@@ -74,12 +74,18 @@ def train_one(algo: str, train_df: pd.DataFrame, config: dict,
     if es_enabled:
         val_fraction = float(es_cfg.get("val_fraction", 0.1))
         train_only, val_df = split_train_validation(train_df, val_fraction)
-        train_dates = train_only.date.nunique()
-        val_dates   = val_df.date.nunique()
-        print(f"  early_stopping=on  train_dates={train_dates}  val_dates={val_dates}  "
+        train_dates  = train_only.date.nunique()
+        val_dates    = val_df.date.nunique()
+        train_first  = train_only["date"].iloc[0]
+        train_last   = train_only["date"].iloc[-1]
+        val_first    = val_df["date"].iloc[0]
+        val_last     = val_df["date"].iloc[-1]
+        print(f"  early_stopping=on  val_fraction={val_fraction:.0%}  "
               f"eval_freq={es_cfg.get('eval_freq', 5000)}  "
               f"patience={es_cfg.get('patience', 5)}  "
               f"min_delta={es_cfg.get('min_delta', 0.01)}")
+        print(f"    train_only: {train_first} -> {train_last}  ({train_dates} days)")
+        print(f"    validation: {val_first} -> {val_last}  ({val_dates} days)")
         train_slice = train_only
     else:
         train_slice = train_df
