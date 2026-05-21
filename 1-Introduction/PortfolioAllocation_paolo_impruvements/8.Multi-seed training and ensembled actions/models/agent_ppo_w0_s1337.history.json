@@ -1,0 +1,110 @@
+[
+  {
+    "timesteps": 5000,
+    "sharpe": 1.5337340690953927,
+    "improved": true,
+    "best_so_far": 1.5337340690953927
+  },
+  {
+    "timesteps": 10000,
+    "sharpe": 1.5592763305887898,
+    "improved": true,
+    "best_so_far": 1.5592763305887898
+  },
+  {
+    "timesteps": 15000,
+    "sharpe": 1.5353084584359165,
+    "improved": false,
+    "best_so_far": 1.5592763305887898
+  },
+  {
+    "timesteps": 20000,
+    "sharpe": 1.5426671568055372,
+    "improved": false,
+    "best_so_far": 1.5592763305887898
+  },
+  {
+    "timesteps": 25000,
+    "sharpe": 1.5488373317274247,
+    "improved": false,
+    "best_so_far": 1.5592763305887898
+  },
+  {
+    "timesteps": 30000,
+    "sharpe": 1.5362657101501567,
+    "improved": false,
+    "best_so_far": 1.5592763305887898
+  },
+  {
+    "timesteps": 35000,
+    "sharpe": 1.5539451371451136,
+    "improved": false,
+    "best_so_far": 1.5592763305887898
+  },
+  {
+    "timesteps": 40000,
+    "sharpe": 1.5760960878457102,
+    "improved": true,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 45000,
+    "sharpe": 1.563578144284945,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 50000,
+    "sharpe": 1.5742811100317375,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 55000,
+    "sharpe": 1.5578093427367734,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 60000,
+    "sharpe": 1.5442647948131512,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 65000,
+    "sharpe": 1.5494679888505647,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 70000,
+    "sharpe": 1.5048787317482375,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 75000,
+    "sharpe": 1.5553001120618521,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 80000,
+    "sharpe": 1.55438227678533,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 85000,
+    "sharpe": 1.4992102168729444,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  },
+  {
+    "timesteps": 90000,
+    "sharpe": 1.4886381262285315,
+    "improved": false,
+    "best_so_far": 1.5760960878457102
+  }
+]

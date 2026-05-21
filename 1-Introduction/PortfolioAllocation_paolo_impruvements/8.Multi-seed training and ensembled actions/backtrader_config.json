@@ -1,0 +1,80 @@
+{
+  "_description": "Backtrader replay of pre-recorded daily portfolio weights (the post-softmax targets stage 3 produced). No model loading, no state reconstruction - the strategy reads weights from inputs.weights_csv and rebalances via order_target_percent each bar. Same-day-close fills via coc=true. A cash_buffer keeps a fraction of capital unallocated for headroom; sell_first sorts orders so sells execute before buys within a bar.",
+
+  "source_config": "config.json",
+
+  "inputs": {
+    "weights_csv":      "results/weights_ppo.csv",
+    "trade_pickle":     "data/full_data.pkl",
+    "auto_slice":       true,
+    "trade_start_date": null,
+    "trade_end_date":   null,
+    "_notes": "weights_csv is produced by 03_backtest.py (one column per ticker, indexed by date, weights are the env's post-softmax actions). Change 'ppo' to 'a2c' (or whichever algo) to replay a different recorded run. trade_pickle supplies OHLCV per ticker - indicators are NOT needed by this stage. data/full_data.pkl covers the entire downloaded history (2008-2021) which is what walk-forward mode needs; data/trade_data.pkl only covers the single-split trade window. auto_slice=true clips the trade DataFrame to the date range of weights_csv automatically - usually the right thing. Set auto_slice=false and provide explicit trade_start_date / trade_end_date to override."
+  },
+
+  "broker": {
+    "initial_cash": 1000000,
+
+    "commission": {
+      "type":      "percentage",
+      "value":     0.001,
+      "stocklike": true,
+      "_notes": "type='percentage' uses bt.broker.setcommission(commission=value, percabs=True, stocklike=stocklike). type='fixed' uses absolute $ per share. Set value=0 to disable."
+    },
+
+    "slippage": {
+      "type":  "percentage",
+      "value": 0.0005,
+      "apply_to": {
+        "open":  true,
+        "limit": true,
+        "match": true,
+        "out":   false
+      },
+      "_notes": "type='percentage' -> set_slippage_perc; type='fixed' -> set_slippage_fixed; type='none' disables slippage."
+    },
+
+    "check_submit": true,
+    "allow_short":  false,
+    "coc":          true,
+    "_notes": "coc=true (cheat-on-close): market orders submitted in next() match the SAME bar's close. This is what 'execute at close of day t' means for the recorded weights - target the weight on bar d_t and have it filled at close(d_t). Set coc=false to fall back to default behaviour (orders fill at the OPEN of the next bar = t+1)."
+  },
+
+  "execution": {
+    "cash_buffer":      0.05,
+    "sell_first":       true,
+    "min_weight_delta": 1e-4,
+    "_notes": "cash_buffer scales recorded weights by (1 - cash_buffer) before submission so the broker has headroom for slippage and fractional-share rounding. sell_first sorts orders by (target_weight - current_weight) ascending so sells (negative delta) hit the broker before buys (positive delta) and free cash within the same bar. min_weight_delta suppresses no-op rebalances."
+  },
+
+  "analyzers": {
+    "sharpe":         {"enabled": true,  "riskfreerate": 0.0, "annualize": true, "timeframe": "Days"},
+    "drawdown":       {"enabled": true},
+    "returns":        {"enabled": true,  "tann": 252},
+    "trade_analyzer": {"enabled": true},
+    "transactions":   {"enabled": true},
+    "position_value": {"enabled": false},
+    "pyfolio":        {"enabled": false, "_notes": "Requires pyfolio installed; emits returns/positions/transactions DataFrames."}
+  },
+
+  "output": {
+    "results_dir":      "results_backtrader",
+    "equity_csv":       "equity_backtrader.csv",
+    "transactions_csv": "transactions.csv",
+    "trade_log_csv":    "trade_log.csv",
+    "daily_trades_csv": "daily_trades.csv",
+    "summary_json":     "summary.json",
+    "plot": {
+      "enabled":      true,
+      "filename":     "backtrader_plot.png",
+      "overlay_djia": true,
+      "_notes": "Renders a clean strategy-level equity curve via matplotlib. overlay_djia rescales source_config.baselines.dji_ticker to the strategy's starting equity and dashes it on the same axes."
+    }
+  },
+
+  "logging": {
+    "verbosity": "info",
+    "log_every_trade": false,
+    "_notes": "verbosity in ('silent','info','debug')."
+  }
+}
