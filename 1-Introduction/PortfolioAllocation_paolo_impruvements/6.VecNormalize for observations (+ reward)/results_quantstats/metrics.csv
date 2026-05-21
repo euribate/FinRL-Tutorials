@@ -3,35 +3,35 @@ Start Period,2015-01-06,2015-01-06
 End Period,2021-10-29,2021-10-29
 Risk-Free Rate,0,0
 Time in Market,1.0,1.0
-Cumulative Return,1.05,1.71
+Cumulative Return,1.05,1.68
 CAGR﹪,0.11,0.16
-Sharpe,0.66,0.94
+Sharpe,0.66,0.92
 Prob. Sharpe Ratio,0.95,0.99
-Smart Sharpe,0.53,0.76
-Sortino,0.91,1.33
-Smart Sortino,0.74,1.08
-Sortino/√2,0.64,0.94
-Smart Sortino/√2,0.52,0.77
-Omega,1.15,1.22
-Max Drawdown,-0.37,-0.31
+Smart Sharpe,0.53,0.75
+Sortino,0.91,1.31
+Smart Sortino,0.74,1.06
+Sortino/√2,0.64,0.92
+Smart Sortino/√2,0.52,0.75
+Omega,1.15,1.21
+Max Drawdown,-0.37,-0.32
 Max DD Date,2020-03-23,2020-03-23
 Max DD Period Start,2020-02-13,2020-02-13
-Max DD Period End,2020-11-13,2020-08-11
-Longest DD Days,419,190
+Max DD Period End,2020-11-13,2020-08-25
+Longest DD Days,419,195
 Volatility (ann.),0.19,0.17
 R^2,0.98,0.98
 Information Ratio,0.08,0.08
-Calmar,0.3,0.51
-Skew,-0.65,-0.3
-Kurtosis,23.58,22.06
-Ulcer Performance Index,16.68,38.92
+Calmar,0.3,0.49
+Skew,-0.65,-0.4
+Kurtosis,23.58,22.48
+Ulcer Performance Index,16.68,37.05
 Risk-Adjusted Return,0.11,0.16
 Risk-Return Ratio,0.04,0.06
 Avg. Return,0,0
 Avg. Win,0.01,0.01
 Avg. Loss,-0.01,-0.01
-Win/Loss Ratio,0.91,0.96
-Profit Ratio,0.79,0.75
+Win/Loss Ratio,0.92,0.96
+Profit Ratio,0.79,0.76
 Expected Daily,0,0
 Expected Monthly,0.01,0.01
 Expected Yearly,0.11,0.15
@@ -41,42 +41,42 @@ Daily Value-at-Risk,-0.02,-0.02
 Expected Shortfall (cVaR),-0.03,-0.03
 Max Consecutive Wins,12.0,14.0
 Max Consecutive Losses,8.0,7.0
-Gain/Pain Ratio,0.15,0.22
-Gain/Pain (1M),0.95,1.6
-Payoff Ratio,0.91,0.96
-Profit Factor,1.15,1.22
+Gain/Pain Ratio,0.15,0.21
+Gain/Pain (1M),0.95,1.57
+Payoff Ratio,0.92,0.96
+Profit Factor,1.15,1.21
 Common Sense Ratio,1.04,1.13
-CPC Index,0.57,0.65
+CPC Index,0.58,0.65
 Tail Ratio,0.91,0.93
-Outlier Win Ratio,4.01,4.24
-Outlier Loss Ratio,4.3,4.36
+Outlier Win Ratio,4.01,4.2
+Outlier Loss Ratio,4.3,4.28
 MTD,0.06,0.05
-3M,0.03,0.02
+3M,0.03,0.03
 6M,0.06,0.06
-YTD,0.17,0.16
-1Y,0.35,0.35
+YTD,0.17,0.17
+1Y,0.35,0.36
 3Y (ann.),0.13,0.17
 5Y (ann.),0.14,0.18
 10Y (ann.),0.11,0.16
 All-time (ann.),0.11,0.16
-Best Day,0.11,0.1
+Best Day,0.11,0.11
 Worst Day,-0.13,-0.11
 Best Month,0.12,0.12
 Worst Month,-0.14,-0.09
-Best Year,0.25,0.29
-Worst Year,-0.06,0.02
+Best Year,0.25,0.28
+Worst Year,-0.06,0.03
 Avg. Drawdown,-0.02,-0.02
 Avg. Drawdown Days,26,15
-Recovery Factor,2.25,3.52
-Ulcer Index,0.06,0.04
-Serenity Index,0.88,2.03
+Recovery Factor,2.25,3.41
+Ulcer Index,0.06,0.05
+Serenity Index,0.88,1.85
 Avg. Up Month,0.03,0.03
 Avg. Down Month,-0.04,-0.03
 Win Days,0.55,0.56
-Win Month,0.68,0.71
+Win Month,0.68,0.72
 Win Quarter,0.79,0.82
 Win Year,0.71,1.0
-Beta,-,0.91
+Beta,-,0.92
 Alpha,-,0.05
 Correlation,-,0.99%
-Treynor Ratio,-,1.88%
+Treynor Ratio,-,1.83%

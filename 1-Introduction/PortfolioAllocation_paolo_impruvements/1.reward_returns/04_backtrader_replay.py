@@ -263,6 +263,22 @@ def export_outputs(strat: RLPortfolioStrategy, cerebro: bt.Cerebro,
         tx_df.to_csv(tx_path, index=False)
         print(f"Saved {tx_path}")
 
+        # Focused per-day trade log: date, ticker, side, quantity, price.
+        # Sorted chronologically with deterministic intra-day ordering
+        # (sells first, then alphabetical ticker) so diffing two runs is easy.
+        daily_name = bt_cfg["output"].get("daily_trades_csv")
+        if daily_name:
+            daily_df = tx_df[["date", "ticker", "side", "size", "price"]].copy()
+            daily_df = daily_df.rename(columns={"size": "quantity"})
+            daily_df["_side_order"] = (daily_df["side"] == "BUY").astype(int)
+            daily_df = daily_df.sort_values(
+                by=["date", "_side_order", "ticker"],
+                kind="mergesort",
+            ).drop(columns=["_side_order"]).reset_index(drop=True)
+            daily_path = out_dir / daily_name
+            daily_df.to_csv(daily_path, index=False)
+            print(f"Saved {daily_path}")
+
     summary = {}
     for name, an in strat.analyzers.getitems():
         try:

@@ -71,6 +71,7 @@
     "equity_csv":       "equity_backtrader.csv",
     "transactions_csv": "transactions.csv",
     "trade_log_csv":    "trade_log.csv",
+    "daily_trades_csv": "daily_trades.csv",
     "summary_json":     "summary.json",
     "plot": {
       "enabled":      true,
