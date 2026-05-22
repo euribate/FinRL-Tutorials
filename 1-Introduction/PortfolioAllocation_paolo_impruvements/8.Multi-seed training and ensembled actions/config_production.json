@@ -1,0 +1,102 @@
+  {
+  "_purpose_notes": "PRODUCTION DEPLOYMENT CONFIG. Differences vs config.json: walk_forward.enabled=false (single train/val split on the full history), data.train_end_date pushed to the latest available bar (so the model sees every regime through ~yesterday), data.trade_*_date collapsed (no eval slice — out-of-sample evaluation already done via the walk-forward config), seeds.list=[42, 1337, 7] for the deployment ensemble. Re-validate the recipe periodically by re-running stages 1-3 with config.json (which preserves the walk-forward setup).",
+
+  "data": {
+    "ticker_list": [
+      "IVE", "QQQ", "TLT", "SHY", "LQD", "GLD", "EEM", "VNQ", "XLE"
+    ],
+    "_ticker_list_notes": "9 tickers (HYG removed). HYG was originally part of the universe but FinRL silently drops it during stage 1 because its inception date (2007-04-11) post-dates download_start_date (2007-04-01), so the first ~10 trading days have no HYG data and the alignment step in preprocess_data discards the ticker. All walk-forward OOS validation (the equity curves, Sharpe distribution, kill-switch tripwires in USAGE_LIVE_TRADING.md) was computed on these 9 tickers, so production deployment uses the same 9 to stay consistent with what was validated. To re-introduce HYG, bump download_start_date to 2007-05-01 (or later), re-run stage 1, re-run the FULL walk-forward (config.json + stages 1-3) to revalidate the recipe on 10 tickers, then retrain production.",
+    "download_start_date": "2007-05-01",
+    "train_start_date":    "2009-01-01",
+    "train_end_date":      "2026-05-20",
+    "trade_start_date":    "2026-05-20",
+    "trade_end_date":      "2026-05-20",
+    "indicators": [
+      "macd", "boll_ub", "boll_lb",
+      "rsi_30", "cci_30", "dx_30",
+      "close_30_sma", "close_60_sma"
+    ],
+    "lookback": 252,
+    "use_turbulence": true,
+    "_train_end_date_notes": "Bump to the most recent fully-closed trading day before retraining. Stage 1 will fail if Yahoo doesn't have a bar at this date (weekend / holiday). The trade_* dates are intentionally collapsed to the same value — single-split mode does not use data/trade_data.pkl, and predict_tomorrow.py pulls its own fresh quotes."
+  },
+
+  "env": {
+    "hmax": 100,
+    "initial_amount": 100000000,
+    "transaction_cost_pct": 0.001,
+    "reward_scaling": 1.0,
+    "reward_mode": "diff_sharpe",
+    "transaction_cost_penalty": 0.001,
+    "diff_ratio_eta": 0.00396825
+  },
+
+  "models": {
+    "a2c":  { "use": false, "total_timesteps": 50000,  "model_kwargs": { "n_steps": 5, "ent_coef": 0.05, "learning_rate": 0.0002 }, "policy_kwargs": null },
+    "ppo":  { "use": true,  "total_timesteps": 150000,
+              "model_kwargs": {
+                "n_steps": 1024, "ent_coef": 0.01, "learning_rate": 0.0002,
+                "batch_size": 128, "gamma": 0.999, "clip_range": 0.3,
+                "n_epochs": 10, "clip_range_vf": null, "gae_lambda": 0.95,
+                "vf_coef": 0.5, "max_grad_norm": 0.5, "target_kl": null,
+                "use_sde": false, "sde_sample_freq": -1
+              },
+              "policy_kwargs": null },
+    "ddpg": { "use": false, "total_timesteps": 50000,  "model_kwargs": { "batch_size": 128, "buffer_size": 50000,  "learning_rate": 0.001 }, "policy_kwargs": null },
+    "sac":  { "use": false, "total_timesteps": 50000,  "model_kwargs": { "batch_size": 128, "buffer_size": 100000, "learning_rate": 0.0003, "learning_starts": 100, "ent_coef": "auto_0.1" }, "policy_kwargs": null },
+    "td3":  { "use": false, "total_timesteps": 30000,  "model_kwargs": { "batch_size": 100, "buffer_size": 1000000,"learning_rate": 0.001 }, "policy_kwargs": null }
+  },
+
+  "training": { "seed": 42 },
+
+  "seeds": {
+    "list":          [42, 1338, 17, 100, 999, 12345, 31415, 7777],
+    "ensemble_size": 3,
+    "_list_notes": "CANDIDATE POOL for training. Stage 2 (02_train.py) processes every seed in this list, producing one model per seed. PPO training is initialisation-dependent: some seeds escape the near-uniform initial policy and learn meaningful allocations, others stay stuck (best validation Sharpe at step 2500 = uniform baseline). Train a larger pool than you need; ensemble_size below selects the best-converged subset at inference.",
+    "_ensemble_size_notes": "How many of the trained candidates to use at INFERENCE TIME (predict_tomorrow.py, inspect_ensemble.py). When set to N < len(seeds.list), the inference scripts rank the candidates by number of validation Sharpe improvements during training (more is better; ties broken by best Sharpe) and use only the top N. When unset, null, or >= len(seeds.list), all candidates participate. Typical values: 3 (default), 5, 7. Use filter_seeds.py to see the ranking explicitly. 02_train.py ALWAYS uses the full candidate pool regardless of this knob - changing ensemble_size never requires retraining."
+  },
+
+  "baselines": {
+    "min_variance": { "weight_bounds": [0, 0.3] },
+    "dji_ticker": "^DJI"
+  },
+
+  "paths": {
+    "data_dir":        "data",
+    "model_dir":       "models",
+    "results_dir":     "results",
+    "tensorboard_dir": "tensorboard"
+  },
+
+  "walk_forward": {
+    "enabled": false,
+    "auto": { "train_years": 6, "eval_years": 1, "step_years": 1 },
+    "windows": null,
+    "_notes": "DISABLED in the production config. The walk-forward setup lives in config.json and is the validation harness — it produces OOS metrics across 7 windows that prove the recipe is robust. The production model is trained on the entire train_start_date -> train_end_date range with no held-out test (a single fresh train run uses all available history)."
+  },
+
+  "early_stopping": {
+    "enabled":      true,
+    "val_fraction": 0.1,
+    "eval_freq":    2500,
+    "patience":     20,
+    "min_delta":    0.001,
+    "_notes": "With ~17 years of training data and val_fraction=0.1, the validation slice is the last ~1.7 years. Large enough for a stable Sharpe estimate, small enough that train_only still has ~15 years of regimes. Reduce to 0.05 if you want the model to see more recent data at the cost of a noisier ES signal."
+  },
+
+  "normalization": {
+    "enabled":     true,
+    "norm_obs":    true,
+    "norm_reward": false,
+    "clip_obs":    10.0,
+    "clip_reward": 10.0,
+    "epsilon":     1e-8,
+    "gamma":       0.99
+  },
+
+  "risk_off": {
+    "enabled":              true,
+    "turbulence_threshold": 80.0,
+    "_notes": "Non-learned safety valve - identical to the walk-forward config. The threshold was validated across the 7 OOS windows in the walk-forward run; do not retune it for the production model without re-validating."
+  }
+}

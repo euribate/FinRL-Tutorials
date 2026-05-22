@@ -100,17 +100,75 @@ def vecnormalize_path_for(model_path: Path) -> Path:
 # ---------- Multi-seed ensembling helpers (improvement #8) -------------------
 
 def get_seeds(config: dict) -> list[int]:
-    """Return the list of seeds to use for multi-seed training (improvement #8).
+    """Return the FULL candidate list of seeds for training (improvement #8).
 
     Reads config.seeds.list. Falls back to a single-element list with
     config.training.seed (or 42) for backward compatibility with prior folders
     that don't have a seeds block.
+
+    Used by 02_train.py - training always processes every candidate so the user
+    can later pick the best-converged subset for deployment.
     """
     seeds_cfg = config.get("seeds")
     if seeds_cfg and isinstance(seeds_cfg.get("list"), list) and seeds_cfg["list"]:
         return [int(s) for s in seeds_cfg["list"]]
     legacy = int(config.get("training", {}).get("seed", 42))
     return [legacy]
+
+
+def pick_ensemble_seeds(config: dict, model_dir, algo: str = "ppo") -> list[int]:
+    """Return the seeds to use AT INFERENCE TIME from the trained candidate pool.
+
+    Behaviour:
+      * If config.seeds.ensemble_size is unset (or >= len(seeds.list)), return
+        the full seeds.list - all trained candidates participate.
+      * If config.seeds.ensemble_size = N < len(seeds.list), rank the candidates
+        by training convergence quality (more validation Sharpe improvements is
+        better; ties broken by best Sharpe), then return the top N.
+
+    Ranking ignores walk-forward histories (those have _w<i> in the filename) -
+    only the single-split production histories are considered.
+
+    Missing history files: a candidate with no history file ranks last
+    (treated as 0 improvements, -inf best Sharpe). Useful when seeds.list
+    contains a seed that has not been trained yet - it won't poison the
+    ranking but also won't be selected unless ensemble_size demands it.
+    """
+    from pathlib import Path  # local import keeps the top of utils.py clean
+
+    all_seeds = get_seeds(config)
+    seeds_cfg = config.get("seeds", {}) or {}
+    n_req     = seeds_cfg.get("ensemble_size")
+    if n_req is None:
+        return all_seeds
+    try:
+        n_req = int(n_req)
+    except Exception as e:
+        raise ValueError(f"seeds.ensemble_size must be an int; got {n_req!r}.") from e
+    if n_req <= 0:
+        raise ValueError(f"seeds.ensemble_size must be > 0; got {n_req}.")
+    if n_req >= len(all_seeds):
+        return all_seeds
+
+    model_dir = Path(model_dir)
+    ranked: list[tuple[int, int, float]] = []
+    for s in all_seeds:
+        h = model_dir / f"agent_{algo}_s{s}.history.json"
+        if not h.exists():
+            ranked.append((s, 0, float("-inf")))
+            continue
+        try:
+            with open(h) as f:
+                data = json.load(f)
+            n_imp = sum(1 for d in data if d.get("improved"))
+            best  = max((d.get("sharpe", float("-inf")) for d in data),
+                        default=float("-inf"))
+            ranked.append((s, n_imp, float(best)))
+        except Exception:
+            ranked.append((s, 0, float("-inf")))
+
+    ranked.sort(key=lambda r: (-r[1], -r[2]))
+    return [r[0] for r in ranked[:n_req]]
 
 
 def average_seed_actions(per_seed_actions: list[pd.DataFrame]) -> pd.DataFrame:
