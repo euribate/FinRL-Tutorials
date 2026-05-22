@@ -61,7 +61,82 @@ def parse_args() -> argparse.Namespace:
                              "to the next trading day's close.")
     parser.add_argument("--algo", default=None,
                         help="Override the algo; defaults to the single algo in config.models with use=true.")
+    parser.add_argument("--current-weights", default=None,
+                        help="Optional CSV with your CURRENT actual portfolio weights "
+                             "(columns: ticker,weight; rows sum to ~1). When provided, the "
+                             "script applies execution.rebalance_band (portfolio-level skip-day) "
+                             "and execution.min_weight_delta (per-ticker freeze) before emitting "
+                             "the target. Without it, the unfiltered ensemble target is emitted.")
     return parser.parse_args()
+
+
+def load_current_weights(path: str, tickers: list[str]) -> np.ndarray:
+    """Read current_weights.csv, align to tickers, validate sums to ~1."""
+    df = pd.read_csv(path)
+    if "ticker" not in df.columns or "weight" not in df.columns:
+        raise ValueError(f"{path} must have columns 'ticker' and 'weight'. "
+                         f"Got: {list(df.columns)}")
+    d = dict(zip(df["ticker"].astype(str), df["weight"].astype(float)))
+    missing = [t for t in tickers if t not in d]
+    if missing:
+        raise ValueError(f"{path} missing tickers: {missing}. "
+                         f"Expected all of: {tickers}")
+    cur = np.array([d[t] for t in tickers], dtype=float)
+    s = cur.sum()
+    if not (0.95 <= s <= 1.05):
+        print(f"  WARNING: current_weights sum to {s:.4f} (expected ~1.0). "
+              f"Renormalising to 1.0 before comparison.")
+        cur = cur / s if s > 0 else cur
+    return cur
+
+
+def apply_execution_filters(target: np.ndarray, current: np.ndarray,
+                            rebalance_band: float,
+                            min_weight_delta: float
+                            ) -> tuple[str, str, np.ndarray, float]:
+    """Compare target vs current; return (decision, reason, filtered_target, l1_drift).
+
+    decision is one of {"HOLD", "REBALANCE"}, reflecting whether ANY actual
+    trades will be executed. Two paths land at HOLD:
+
+      * Drift below band: L1(target, current) < rebalance_band. The portfolio
+        is close enough to the model's view; do nothing.
+      * All-frozen:       L1 >= band but every per-ticker delta < min_weight_delta.
+        The drift is spread across many tickers, each individually too small to
+        trade economically. After applying the per-ticker freeze, filtered ==
+        current; no trades remain.
+
+    REBALANCE only fires when at least one ticker survives the per-ticker
+    filter, i.e. there is at least one trade meaningful enough to execute.
+    """
+    l1 = float(np.abs(target - current).sum())
+    if l1 < rebalance_band:
+        return "HOLD", "drift below band", current.copy(), l1
+    if min_weight_delta <= 0.0:
+        return "REBALANCE", "above band, no per-ticker filter", target.copy(), l1
+
+    deltas      = target - current
+    freeze_mask = np.abs(deltas) < min_weight_delta
+    if freeze_mask.all():
+        return "HOLD", "all per-ticker deltas below min_weight_delta", current.copy(), l1
+
+    # Keep frozen tickers at EXACTLY their current weight; scale only the
+    # non-frozen targets so the filtered vector still sums to 1. This way
+    # "frozen" really means zero trade for that ticker - no fractional drift
+    # gets sprinkled back from renormalisation.
+    filtered             = current.copy()
+    sum_frozen_current   = float(current[freeze_mask].sum())
+    sum_target_nonfrozen = float(target[~freeze_mask].sum())
+    leftover             = 1.0 - sum_frozen_current
+    if sum_target_nonfrozen > 0.0 and leftover > 0.0:
+        scale = leftover / sum_target_nonfrozen
+        filtered[~freeze_mask] = target[~freeze_mask] * scale
+    else:
+        # Degenerate case (frozen sum >= 1 or non-frozen target = 0): keep
+        # raw target for non-frozen tickers without scaling.
+        filtered[~freeze_mask] = target[~freeze_mask]
+
+    return "REBALANCE", "above band, some tickers above per-ticker threshold", filtered, l1
 
 
 def fetch_recent_data(config: dict, asof: dt.date) -> pd.DataFrame:
@@ -234,14 +309,37 @@ def main() -> None:
 
     target_weights = np.zeros(n) if risk_off_triggered else model_weights.copy()
 
+    # ----- Execution filters (Option B): per-ticker freeze + portfolio skip-day -----
+    exec_cfg         = config.get("execution", {}) or {}
+    rebalance_band   = float(exec_cfg.get("rebalance_band",   0.02))
+    min_weight_delta = float(exec_cfg.get("min_weight_delta", 0.02))
+    if args.current_weights:
+        current_weights = load_current_weights(args.current_weights, tickers)
+        decision, decision_reason, filtered_weights, l1_drift = apply_execution_filters(
+            target_weights, current_weights,
+            rebalance_band=rebalance_band,
+            min_weight_delta=min_weight_delta,
+        )
+    else:
+        current_weights = np.full(n, float("nan"))
+        filtered_weights = target_weights.copy()
+        l1_drift = float("nan")
+        decision = "REBALANCE"  # no current_weights -> no skip-day logic possible
+        decision_reason = "no --current-weights supplied"
+
     out_df = pd.DataFrame({
-        "date":            [actual_asof_row] * n,
-        "ticker":          tickers,
-        "model_weight":    model_weights,
-        "target_weight":   target_weights,
-        "turbulence":      [turb] * n,
-        "risk_off_active": [risk_off_triggered] * n,
-        "ensemble_size":   [len(seeds)] * n,
+        "date":             [actual_asof_row] * n,
+        "ticker":           tickers,
+        "model_weight":     model_weights,
+        "target_weight":    target_weights,
+        "current_weight":   current_weights,
+        "filtered_weight":  filtered_weights,
+        "delta":            filtered_weights - current_weights,
+        "decision":         [decision] * n,
+        "l1_drift":         [l1_drift] * n,
+        "turbulence":       [turb] * n,
+        "risk_off_active":  [risk_off_triggered] * n,
+        "ensemble_size":    [len(seeds)] * n,
     })
 
     fn_asof   = actual_asof_row.replace("-", "")
@@ -257,13 +355,45 @@ def main() -> None:
     print(f"  Turbulence on {actual_asof_row}: {turb:.2f}   threshold: {ro_thr:.2f}   "
           f"risk_off: {'YES (GO TO CASH)' if risk_off_triggered else 'no'}")
     print(f"  Holding period: {actual_asof_row} close -> next trading day close")
+    if args.current_weights:
+        print(f"  Filters: rebalance_band={rebalance_band:.3f}  min_weight_delta={min_weight_delta:.3f}")
+        print(f"  Portfolio L1 drift (target vs current): {l1_drift:.4f}  ({'<' if l1_drift < rebalance_band else '>='} band)")
+        print(f"  ===> DECISION: {decision}  ({decision_reason}) <===")
+    else:
+        print(f"  (no --current-weights passed; emitting unfiltered ensemble target)")
+
     print()
-    print(f"  {'ticker':<8}  {'target':>8}  {'model':>8}")
-    print(f"  {'-'*8}  {'-'*8}  {'-'*8}")
-    for t, tgt, mdl in zip(tickers, target_weights, model_weights):
-        print(f"  {t:<8}  {tgt:>7.1%}  {mdl:>7.1%}")
-    print(f"  {'-'*8}  {'-'*8}  {'-'*8}")
-    print(f"  {'SUM':<8}  {target_weights.sum():>7.1%}  {model_weights.sum():>7.1%}")
+    if args.current_weights:
+        # Detailed table with current vs target vs filtered
+        print(f"  {'ticker':<8}  {'current':>8}  {'target':>8}  {'filtered':>9}  {'delta':>9}  {'note':<10}")
+        print(f"  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*9}  {'-'*9}  {'-'*10}")
+        for t, cur, tgt, flt in zip(tickers, current_weights, target_weights, filtered_weights):
+            delta = flt - cur
+            note = ""
+            if decision == "HOLD":
+                note = "hold"
+            elif abs(tgt - cur) < min_weight_delta:
+                note = "frozen"
+            elif abs(delta) > 0.0:
+                note = "trade"
+            print(f"  {t:<8}  {cur:>7.1%}  {tgt:>7.1%}  {flt:>8.1%}  {delta:>+8.1%}  {note:<10}")
+        print(f"  {'-'*8}  {'-'*8}  {'-'*8}  {'-'*9}  {'-'*9}")
+        print(f"  {'SUM':<8}  {current_weights.sum():>7.1%}  {target_weights.sum():>7.1%}  {filtered_weights.sum():>8.1%}")
+        if decision == "HOLD":
+            print(f"\n  >>> HOLD: no trades today.  Reason: {decision_reason}.  <<<")
+            print(f"      L1 drift={l1_drift:.4f}, rebalance_band={rebalance_band:.3f}, min_weight_delta={min_weight_delta:.3f}")
+        else:
+            n_trades = int(np.sum(np.abs(filtered_weights - current_weights) > 1e-9))
+            print(f"\n  >>> REBALANCE: execute {n_trades} ticker trades before close. <<<")
+    else:
+        # Legacy/no-current-weights mode: simple target table
+        print(f"  {'ticker':<8}  {'target':>8}  {'model':>8}")
+        print(f"  {'-'*8}  {'-'*8}  {'-'*8}")
+        for t, tgt, mdl in zip(tickers, target_weights, model_weights):
+            print(f"  {t:<8}  {tgt:>7.1%}  {mdl:>7.1%}")
+        print(f"  {'-'*8}  {'-'*8}  {'-'*8}")
+        print(f"  {'SUM':<8}  {target_weights.sum():>7.1%}  {model_weights.sum():>7.1%}")
+
     if risk_off_triggered:
         print("\n  >>> RISK-OFF: liquidate to cash and pay the turnover cost. <<<")
 

@@ -178,6 +178,34 @@ Then later:
 
 If anything looks wrong (NaNs, weights not summing to 1, missing tickers), debug before deploying. Otherwise the output CSV at `results/target_weights_<YYYYMMDD>.csv` is ready.
 
+### 1.8 Execution filters — HOLD vs REBALANCE (Option B)
+
+Two execution-time knobs in `config_production.json` decide whether daily inference results in trades or in a "hold" no-op. Both are independent of the model — they apply AFTER the ensemble has produced its target weights, comparing the target to your CURRENT actual portfolio:
+
+```json
+"execution": {
+  "rebalance_band":   0.02,
+  "min_weight_delta": 0.02
+}
+```
+
+| Knob | Semantics |
+|---|---|
+| `rebalance_band`   | Portfolio-level L1 drift threshold. If `sum(|target - current|) < band`, skip the day entirely (HOLD). |
+| `min_weight_delta` | Per-ticker freeze. Any ticker whose `|target - current| < min_weight_delta` is pinned at current and contributes zero trade. Mirrors `backtrader_config.json`'s `execution.min_weight_delta` exactly. |
+
+The decision lattice:
+
+| Condition                                                            | Decision  | Trades executed |
+|---|---|---|
+| L1 drift < `rebalance_band`                                          | HOLD      | 0 |
+| L1 drift ≥ band AND every per-ticker delta < `min_weight_delta`     | HOLD      | 0 |
+| L1 drift ≥ band AND ≥ 1 per-ticker delta ≥ `min_weight_delta`       | REBALANCE | N where N = number of unfrozen tickers |
+
+Frozen tickers stay EXACTLY at their current weight; only the unfrozen subset absorbs renormalisation. So if VNQ is frozen at 10%, your execution will not show a 0.1% nuisance trade on VNQ from float drift.
+
+Both filters apply ONLY when you pass `--current-weights` to `predict_tomorrow.py`. Without that flag, the script falls back to emitting the unfiltered ensemble target (the legacy behaviour). This is intentional — it lets you stage the filter in gradually.
+
 ---
 
 ## 2. Daily workflow (live trading)
@@ -190,11 +218,29 @@ Nothing required. You can optionally pre-run `predict_tomorrow.py` to see what t
 
 ### 2.2 Intraday — between 3:30 pm and 3:55 pm ET
 
-1. **Run the prediction**:
+1. **Have your current portfolio weights ready**. Maintain a CSV (`current_weights.csv` is a good name) with two columns and one row per ticker, updated each evening after market close from your broker's positions:
+
+   ```
+   ticker,weight
+   EEM,0.105
+   GLD,0.198
+   IVE,0.096
+   LQD,0.090
+   QQQ,0.110
+   SHY,0.091
+   TLT,0.092
+   VNQ,0.094
+   XLE,0.124
+   ```
+
+   Weights = `position_value / total_portfolio_value`. They should sum to ~1.0.
+
+2. **Run the prediction**:
 
    ```bash
    cd "/Users/paolobortolotti/FinRL-Tutorials/1-Introduction/PortfolioAllocation_paolo_impruvements/8.Multi-seed training and ensembled actions"
-   python predict_tomorrow.py --config config_production.json
+   python predict_tomorrow.py --config config_production.json \
+                              --current-weights current_weights.csv
    ```
 
    The script will:
@@ -204,11 +250,39 @@ Nothing required. You can optionally pre-run `predict_tomorrow.py` to see what t
    - Load each selected seed's model + VecNormalize stats.
    - Roll each model deterministically through the recent history; capture the LAST action vector (the one for today → tomorrow).
    - Softmax each seed's raw action → per-seed weight vector.
-   - Average across seeds → ensemble model weights.
+   - Average across seeds → ensemble target weights.
    - Apply the risk-off gate: if today's turbulence > threshold (80.0 by default), override target weights to zero (= cash).
-   - Print a summary and save `results/target_weights_<YYYYMMDD>.csv`.
+   - Apply the execution filters (`rebalance_band` and `min_weight_delta`) to decide HOLD or REBALANCE.
+   - Print the decision + per-ticker trade list, save `results/target_weights_<YYYYMMDD>.csv`.
 
    Total runtime: ~30–90 seconds depending on Yahoo's responsiveness.
+
+   You'll see one of three outputs:
+
+   **(a) HOLD — drift below band**:
+   ```
+   ===> DECISION: HOLD  (drift below band) <===
+   >>> HOLD: no trades today. <<<
+   ```
+   Nothing to do. The model's view hasn't shifted enough to justify trading.
+
+   **(b) HOLD — all per-ticker deltas frozen**:
+   ```
+   ===> DECISION: HOLD  (all per-ticker deltas below min_weight_delta) <===
+   ```
+   The portfolio L1 drift was above the band, but every single ticker delta was below 2%. All trades would be too small to justify the commission. No trades.
+
+   **(c) REBALANCE — N trades to execute**:
+   ```
+   ===> DECISION: REBALANCE  (above band, some tickers above per-ticker threshold) <===
+   ticker     current    target   filtered      delta  note
+   --------  --------  --------  ---------  ---------  ----------
+   EEM         10.5%     9.5%      9.5%      -1.0%   frozen
+   GLD         19.8%    21.8%     21.8%      +2.0%   trade
+   ...
+   >>> REBALANCE: execute 3 ticker trades before close. <<<
+   ```
+   Trade the deltas marked `trade`. Skip the deltas marked `frozen`.
 
 2. **Sanity-check the output**:
    - Weights sum to 1.00 (or 0.00 if risk-off triggered).
@@ -408,7 +482,7 @@ After 60 days of paper trading you'll have ~60 daily returns. Compute live (pape
 | One-time: train candidate pool  | `python 02_train.py --config config_production.json`               |
 | One-time: rank seed convergence | `python filter_seeds.py`                                           |
 | One-time: verify ensemble health| `python inspect_ensemble.py --config config_production.json`       |
-| Daily: predict tomorrow         | `python predict_tomorrow.py --config config_production.json`       |
+| Daily: predict tomorrow         | `python predict_tomorrow.py --config config_production.json --current-weights current_weights.csv` |
 | Inspect today's turbulence      | `python inspect_turbulence.py`                                     |
 | Re-validate recipe              | `python 02_train.py --config config.json && python 03_backtest.py --config config.json` |
 
@@ -430,6 +504,8 @@ After 60 days of paper trading you'll have ~60 daily returns. Compute live (pape
 |---|---|---|
 | `seeds.list`                      | 8 seeds | Candidate pool size. More = more chances to find converged seeds. Costs train time. |
 | `seeds.ensemble_size`             | 3       | How many trained candidates participate in the deployed ensemble. No retrain.   |
+| `execution.rebalance_band`        | 0.02    | Portfolio-level L1 drift threshold below which `predict_tomorrow.py` outputs HOLD. 0.0 disables skip-day. |
+| `execution.min_weight_delta`      | 0.02    | Per-ticker delta below which the ticker is frozen at current. Mirrors backtrader's. 0.0 disables freeze. |
 | `early_stopping.val_fraction`     | 0.1     | Fraction of training data reserved for ES validation Sharpe (last 10% = ~1.7y). |
 | `early_stopping.eval_freq`        | 2500    | Steps between validation Sharpe evaluations.                                    |
 | `early_stopping.patience`         | 20      | ES gives up after this many evals with no improvement.                          |

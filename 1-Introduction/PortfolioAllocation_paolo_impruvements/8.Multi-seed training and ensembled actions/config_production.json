@@ -98,5 +98,12 @@
     "enabled":              true,
     "turbulence_threshold": 80.0,
     "_notes": "Non-learned safety valve - identical to the walk-forward config. The threshold was validated across the 7 OOS windows in the walk-forward run; do not retune it for the production model without re-validating."
+  },
+
+  "execution": {
+    "rebalance_band":   0.02,
+    "min_weight_delta": 0.02,
+    "_rebalance_band_notes": "Portfolio-level L1 threshold (sum of |target - current| across tickers). When predict_tomorrow.py receives --current-weights and the L1 drift is BELOW this band, the script outputs HOLD - no trades for the day, the model's signal is treated as a no-op. Above the band, the per-ticker filter (min_weight_delta) is applied to the target and the result is emitted as REBALANCE. Set to 0.0 to disable skip-day logic (always rebalance). With a 9-ticker portfolio, a band of 0.02 corresponds to needing on average a ~22 bp shift PER TICKER before a rebalance is triggered - in practice this skips ~40-60%% of daily rebalances on quiet days.",
+    "_min_weight_delta_notes": "Per-ticker delta below which the freeze takes the CURRENT weight instead of the proposed target. Mirrors backtrader_config.json's execution.min_weight_delta exactly (same default, same semantics). On REBALANCE days, any ticker whose |target - current| < this is frozen at current_weight, then the result is renormalised to sum to 1. Set to 0.0 to disable the per-ticker filter (execute the model's exact target). Both knobs apply ONLY when --current-weights is passed; without it, the script falls back to emitting the unfiltered ensemble target."
   }
 }

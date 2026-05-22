@@ -13,7 +13,7 @@
   },
 
   "broker": {
-    "initial_cash": 1000000,
+    "initial_cash": 100000000,
 
     "commission": {
       "type":      "percentage",
@@ -23,8 +23,8 @@
     },
 
     "slippage": {
-      "type":  "percentage",
-      "value": 0.0005,
+      "type":  "none",
+      "value": 0.0000,
       "apply_to": {
         "open":  true,
         "limit": true,
@@ -41,9 +41,9 @@
   },
 
   "execution": {
-    "cash_buffer":      0.05,
+    "cash_buffer":      0.00,
     "sell_first":       true,
-    "min_weight_delta": 1e-4,
+    "min_weight_delta": 0.02,
     "_notes": "cash_buffer scales recorded weights by (1 - cash_buffer) before submission so the broker has headroom for slippage and fractional-share rounding. sell_first sorts orders by (target_weight - current_weight) ascending so sells (negative delta) hit the broker before buys (positive delta) and free cash within the same bar. min_weight_delta suppresses no-op rebalances."
   },
 

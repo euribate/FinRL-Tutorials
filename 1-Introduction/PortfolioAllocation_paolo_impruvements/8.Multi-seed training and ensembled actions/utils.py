@@ -191,11 +191,15 @@ def average_seed_actions(per_seed_actions: list[pd.DataFrame]) -> pd.DataFrame:
 
 
 def daily_return_from_weights(weights_df: pd.DataFrame,
-                              trade_df: pd.DataFrame) -> pd.DataFrame:
+                              trade_df: pd.DataFrame,
+                              tc_penalty: float = 0.0) -> pd.DataFrame:
     """Compute portfolio daily_return from a sequence of daily weight vectors.
 
     weights_df: index = date (Timestamp or str), columns = tickers, rows sum to 1.
     trade_df:   long-format with columns at least [date, tic, close].
+    tc_penalty: per-unit-turnover cost rate (drift-adjusted formula, matches
+                LogReturnPortfolioEnv.step()). Set to 0.0 to compute a
+                friction-free curve.
 
     Returns a 2-column DataFrame [date, daily_return] following the env's
     convention: first row's daily_return = 0 (no prior price to compare to).
@@ -203,6 +207,20 @@ def daily_return_from_weights(weights_df: pd.DataFrame,
     Used by stage 3 to compute the ensemble's portfolio_return after
     averaging per-seed actions - because you cannot just average the per-seed
     portfolio_return series (the equity dynamics differ per seed).
+
+    TC formula (matches LogReturnPortfolioEnv.step()):
+      growth_i  = price_i[t] / price_i[t-1]
+      drifted_i = w_prev_i * growth_i
+      w_drift_i = drifted_i / sum(drifted)         (= w_prev if sum == 0)
+      turnover  = |w_target - w_drift|.sum()
+      net_ret   = (1 + gross_ret) * (1 - tc_penalty * turnover) - 1
+
+    The drift-adjusted turnover correctly charges for the rebalancing required
+    to maintain target weights against per-ticker price drift - a buy-and-hold
+    strategy still incurs cost, matching what a broker actually charges.
+    Without this, the equity curve overstates returns by ~tc_penalty * 252 *
+    mean_daily_turnover per year. With the default config (tc_penalty=0.001,
+    ~4-5% daily turnover) that is ~1.2 pp/yr drag that would otherwise be missed.
     """
     prices = (trade_df.sort_values(["date", "tic"])
               .pivot_table(index="date", columns="tic", values="close"))
@@ -213,8 +231,28 @@ def daily_return_from_weights(weights_df: pd.DataFrame,
     w = w.reindex(index=prices.index).reindex(columns=prices.columns).fillna(0.0)
 
     rets = prices.pct_change().fillna(0.0)
-    port_return = (rets * w).sum(axis=1)
-    port_return.iloc[0] = 0.0  # match env convention
+    gross_return = (rets * w).sum(axis=1)
+    gross_return.iloc[0] = 0.0  # match env convention - no return on first row
+
+    if tc_penalty <= 0.0:
+        port_return = gross_return
+    else:
+        # Drift-adjusted turnover, computed in vectorised form against w.shift(1).
+        # On every row except the first we compare w_target_t to w_drift_t where
+        # w_drift_t is what w[t-1] becomes after one bar of per-ticker price
+        # growth (matches the env's snapshot at the START of bar t, pre-rebalance).
+        growth   = 1.0 + rets                       # per-ticker growth t-1 -> t
+        drifted  = w.shift(1).fillna(0.0) * growth  # post-drift unnormalised
+        total    = drifted.sum(axis=1)
+        # Where total==0 (e.g. risk-off liquidation produced all-zero w_prev),
+        # fall back to w_prev (= drifted itself, all zeros) so the upcoming
+        # |w_target - w_drift|.sum() captures the re-entry from cash.
+        w_drift  = drifted.div(total.where(total > 0.0, 1.0), axis=0)
+        # Mask the first row where w.shift(1) was NaN -> drift undefined.
+        turnover = (w - w_drift).abs().sum(axis=1)
+        turnover.iloc[0] = 0.0
+        tc_drag  = (tc_penalty * turnover).clip(upper=1.0)
+        port_return = (1.0 + gross_return) * (1.0 - tc_drag) - 1.0
 
     return pd.DataFrame({
         "date": prices.index.strftime("%Y-%m-%d"),

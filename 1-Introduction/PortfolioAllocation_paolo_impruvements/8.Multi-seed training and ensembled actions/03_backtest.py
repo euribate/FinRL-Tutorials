@@ -158,8 +158,15 @@ def predict_walk_forward(algo: str, full_df: pd.DataFrame, config: dict,
             per_seed_actions.append(acts)
         # Ensemble: average post-softmax weights across seeds; recompute
         # portfolio_return from the averaged weights against the eval slice.
+        # Pass tc_penalty so the drift-adjusted TC drag the env applies inside
+        # step() is also applied to the ensembled curve - otherwise the equity
+        # plot reports a friction-free backtest (the per-seed env runs already
+        # paid TC inside their own step() but those returns are discarded once
+        # we average the WEIGHTS rather than the per-seed return series).
+        tc_penalty       = float(config["env"].get("transaction_cost_penalty", 0.0))
         ensemble_actions = average_seed_actions(per_seed_actions)
-        ensemble_returns = daily_return_from_weights(ensemble_actions, eval_slice)
+        ensemble_returns = daily_return_from_weights(ensemble_actions, eval_slice,
+                                                    tc_penalty=tc_penalty)
         return_pieces.append(ensemble_returns)
         action_pieces.append(ensemble_actions)
 
@@ -300,7 +307,9 @@ def main() -> None:
                 )
                 per_seed_actions.append(acts)
             ensemble_actions = average_seed_actions(per_seed_actions)
-            ensemble_returns = daily_return_from_weights(ensemble_actions, eval_df)
+            tc_penalty       = float(config["env"].get("transaction_cost_penalty", 0.0))
+            ensemble_returns = daily_return_from_weights(ensemble_actions, eval_df,
+                                                        tc_penalty=tc_penalty)
             equity[algo.upper()] = daily_return_to_equity(ensemble_returns, initial)
             weights_path = results_dir / f"weights_{algo}.csv"
             ensemble_actions.to_csv(weights_path)

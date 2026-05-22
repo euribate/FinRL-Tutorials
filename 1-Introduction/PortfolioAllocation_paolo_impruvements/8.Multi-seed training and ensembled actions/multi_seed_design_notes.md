@@ -38,7 +38,17 @@ Correct approach:
     for each day d from 1 to T:
         return_d = sum_over_tickers( (close_d / close_{d-1} - 1) * w_ensemble_d )
 
-This is implemented in utils.daily_return_from_weights(weights_df, trade_df).
+This is implemented in utils.daily_return_from_weights(weights_df, trade_df, tc_penalty).
+
+IMPORTANT: TC application was a bug before, fixed now
+-----------------------------------------------------
+Before the fix, daily_return_from_weights computed gross returns only - the env's drift-adjusted transaction-cost penalty (LogReturnPortfolioEnv.step()) was bypassed entirely for the multi-seed walk-forward curve. The per-seed env rollouts DO pay TC inside their own step(), but those returns are discarded once we average the WEIGHTS rather than the per-seed return series.
+
+Symptom: stage 3's equity_plot.png reported PPO at ~$308M (+208% over 11.4 years, CAGR 10.4%) while backtrader replaying the same weights produced $218M (CAGR 7.1%). The 90 pp gap was ~35 pp from the missing env TC + ~55 pp from real backtrader execution friction.
+
+Fix: daily_return_from_weights now accepts tc_penalty and applies the same drift-adjusted formula as the env. 03_backtest.py passes config["env"]["transaction_cost_penalty"] at both call sites. After the fix, stage 3 lands at ~$273M (CAGR 9.3%), matching the analytical reconstruction. The remaining ~50 pp gap to stage 4 is structural backtrader execution friction.
+
+Backward compatible: tc_penalty=0.0 (the new default) reproduces the old friction-free behaviour for anyone else calling the function.
 
 File naming convention
 ----------------------
@@ -118,3 +128,20 @@ When ensembling is NOT worth it
 - When you're sanity-checking a config change — use single seed, see if it matters at all, then bring in the ensemble for the final reportable number.
 
 Most other cases (and definitely with diff_sharpe + walk-forward), 3-seed ensembling is the right default.
+
+Production extension: candidate pool + filter
+---------------------------------------------
+For deployment (config_production.json), the simple 3-seed list is replaced by a candidate pool + post-training filter. Two distinct config knobs:
+
+    seeds.list           candidate POOL — trained by stage 2 (default 8 seeds)
+    seeds.ensemble_size  how many to USE at inference (default 3)
+
+PPO training is initialisation-dependent. Some seeds escape the near-uniform initial policy; others stay stuck (saved "best" checkpoint is the un-learned policy at step 2500). Rather than fighting this, train more candidates than needed and select the top N at inference.
+
+utils.pick_ensemble_seeds(config, model_dir) ranks each trained seed by (n_improvements desc, best_sharpe desc) reading the per-seed history.json. predict_tomorrow.py and inspect_ensemble.py call it automatically.
+
+Changing ensemble_size does NOT require retraining — the filter runs at inference. Change from 3 to 5 (or vice versa) any time.
+
+filter_seeds.py prints the ranking explicitly so you can audit which seeds are converged vs stuck.
+
+This entire layer is OPTIONAL for the validation pipeline (config.json) — the walk-forward path still uses the full seeds.list with no filtering.

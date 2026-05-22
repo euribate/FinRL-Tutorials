@@ -30,23 +30,43 @@ Setting `seeds.list = [42]` (singleton) reproduces single-seed behaviour, modulo
 
 ```
 PortfolioAllocation_paolo_impruvements/
-    config.json                  data + env + per-algorithm hyperparameters
+    config.json                  walk-forward VALIDATION config (default 7 windows)
+    config_production.json       single-split DEPLOYMENT config (candidate pool + ensemble_size)
     backtrader_config.json       backtrader-specific replay settings
     quantstats_config.json       quantstats report settings
-    utils.py                     shared helpers (config IO, env_kwargs, covariance)
+    utils.py                     shared helpers (config IO, env_kwargs, covariance,
+                                                 daily_return_from_weights, pick_ensemble_seeds)
     01_get_data.py               stage 1: download + indicators + covariance + split
-    02_train.py                  stage 2: train each algo flagged use=true
+    02_train.py                  stage 2: train each algo flagged use=true (per seed)
     03_backtest.py               stage 3: backtest + Min-Variance + DJIA baselines
     04_backtrader_replay.py      stage 4: replay one agent through backtrader
     05_quantstats_report.py      stage 5: QuantStats HTML tearsheet
+    predict_tomorrow.py          DAILY INFERENCE for live trading (HOLD/REBALANCE decision)
+    inspect_ensemble.py          diagnostic: per-seed weights side-by-side + agreement
+    filter_seeds.py              diagnostic: rank trained seeds by training convergence
+    inspect_turbulence.py        diagnostic: turbulence distribution + threshold sensitivity
+    inspect_fills.py             diagnostic: backtrader fill count + implied slippage
+    inspect_env_turnover.py      diagnostic: env-vs-backtrader turnover comparison
     README.md                    this file
-    data/                        train_data.pkl, trade_data.pkl       (created)
-    models/                      agent_<algo>.zip                     (created)
-    results/                     equity_curves.csv, equity_plot.png   (created)
-    results_backtrader/          backtrader outputs                   (created)
-    results_quantstats/          report.html, metrics.csv             (created)
-    tensorboard/                 TB logs per algo                     (created)
+    USAGE_LIVE_TRADING.md        operations manual for the live trading workflow
+    multi_seed_design_notes.md   design notes for improvement #8
+    data/                        train_data.pkl, trade_data.pkl                  (created)
+    models/                      agent_<algo>_[w<i>_]s<seed>.zip                 (created)
+    results/                     equity_curves.csv, equity_plot.png,
+                                 target_weights_<date>.csv                       (created)
+    results_backtrader/          backtrader outputs                              (created)
+    results_quantstats/          report.html, metrics.csv                        (created)
+    tensorboard/                 TB logs per algo                                (created)
 ```
+
+### Two configs, two purposes
+
+| Config                    | Purpose                                                                                                  |
+|---|---|
+| `config.json`             | Walk-forward VALIDATION: 7 train/eval windows producing the OOS Sharpe distribution. Run when you change hyperparameters, the reward shape, or the universe. |
+| `config_production.json`  | DEPLOYMENT: single train/val split on the full history, multi-seed candidate pool, no held-out test slice. The trained models go into live trading via `predict_tomorrow.py`. |
+
+The walk-forward pipeline proves the recipe is robust. The production pipeline trains the model you actually trade. See `USAGE_LIVE_TRADING.md` for the daily ops loop.
 
 ---
 
@@ -108,6 +128,26 @@ python 04_backtrader_replay.py --config backtrader_config.json
 #    Requires `pip install quantstats`.
 python 05_quantstats_report.py --config quantstats_config.json
 ```
+
+### Production deployment (live trading)
+
+The standard pipeline above (stages 1–5 on `config.json`) is the VALIDATION harness. To actually trade with the model, switch to `config_production.json`:
+
+```bash
+# Train a candidate pool of seeds on the full history (no held-out test slice)
+python 01_get_data.py --config config_production.json
+python 02_train.py   --config config_production.json
+
+# Inspect convergence and ensemble health before deploying
+python filter_seeds.py
+python inspect_ensemble.py --config config_production.json
+
+# Daily, before 4 pm market close:
+python predict_tomorrow.py --config config_production.json \
+                           --current-weights current_weights.csv
+```
+
+The daily script outputs either `HOLD` (no trades) or `REBALANCE` (with the per-ticker trade list) based on the execution filters in `config_production.json`. See `USAGE_LIVE_TRADING.md` for the full operations manual.
 
 ---
 
@@ -748,3 +788,88 @@ To keep this pipeline a faithful replication, the following potential improvemen
 - Early stopping on validation Sharpe.
 
 Each of those can be slotted into this scaffolding by adding a new section to `config.json` and a corresponding branch in the relevant stage script.
+
+### A.20 Production deployment pipeline
+
+The standard walk-forward pipeline (A.13) is a VALIDATION harness — its job is to prove the recipe is robust across regimes via 7 OOS windows. It is NOT the model you deploy. The deployment pipeline lives alongside the validation pipeline in three independent additions.
+
+**A.20.1 Two configs**
+
+`config.json` (existing, unchanged) runs the walk-forward validation. `config_production.json` (new) runs a single-split training on the full history through ~yesterday, with no held-out test slice. The validation slice for ES is the last 10% of training dates (~1.7 years of recent data). The deployment models go into `models/agent_ppo_s<seed>.zip` (no `_w` suffix).
+
+**A.20.2 Candidate pool + filter**
+
+PPO training is initialisation-dependent. Some seeds escape the near-uniform initial policy and learn meaningful allocations; others stay stuck, with the saved "best" checkpoint being the un-learned policy at step 2,500. Empirically about 1 in 3 seeds gets stuck on this state space.
+
+Rather than fighting PPO's training dynamics, deployment treats this as routine:
+
+| Config knob               | Role                                                                                           |
+|---|---|
+| `seeds.list`              | Candidate POOL trained by stage 2. Default 8 seeds. Stage 2 trains every entry.                |
+| `seeds.ensemble_size`     | How many to use at INFERENCE. Default 3. Lower than the pool size enables filtering.            |
+
+`utils.pick_ensemble_seeds(config, model_dir)` reads each `agent_ppo_s<seed>.history.json` and ranks seeds by (n_improvements desc, best_sharpe desc). The top `ensemble_size` participate in the deployed ensemble. No retraining required to change `ensemble_size` — the ranking happens at inference time.
+
+`filter_seeds.py` prints the ranking explicitly. `inspect_ensemble.py` compares the chosen seeds' weight vectors side-by-side with pairwise L1 / Jensen-Shannon disagreement metrics and an auto-classified verdict.
+
+**A.20.3 Critical bug fix: `daily_return_from_weights` was friction-free**
+
+A long-standing bug in `predict_walk_forward` / `predict_one_split` (stage 3) caused the equity curve in `equity_plot.png` to overstate returns by ~1.2 pp per year. Root cause:
+
+- The env's `LogReturnPortfolioEnv.step()` correctly applies a drift-adjusted TC penalty during training and per-seed rollouts.
+- But stage 3 in walk-forward + multi-seed mode does NOT use the env's portfolio_return — it averages per-seed action vectors first, then recomputes returns via `utils.daily_return_from_weights(...)`.
+- That function used to compute `(rets * w).sum()` without any TC penalty. The drift-adjusted TC formula in the env was bypassed entirely at evaluation.
+
+Symptom: stage 3 reported PPO at +208.6% over 11.4 years (CAGR 10.4%), while the same weights replayed through backtrader (stage 4) produced +118.8% (CAGR 7.1%). The 90 pp gap is decomposable as ~35 pp from the missing env TC + ~55 pp from real backtrader execution friction (discrete-event fills, integer share rounding, sequential rebalances).
+
+**Fix.** `daily_return_from_weights` now accepts `tc_penalty` and applies the exact same drift-adjusted formula as the env:
+
+```
+growth   = 1.0 + rets                          # per-ticker growth t-1 -> t
+drifted  = w.shift(1).fillna(0.0) * growth     # post-drift unnormalised
+total    = drifted.sum(axis=1)
+w_drift  = drifted.div(total.where(total > 0.0, 1.0), axis=0)
+turnover = (w - w_drift).abs().sum(axis=1)
+tc_drag  = (tc_penalty * turnover).clip(upper=1.0)
+port_ret = (1 + gross_return) * (1 - tc_drag) - 1
+```
+
+Vectorised against `w.shift(1)`. Identical to the env's per-step formula. The function is backward-compatible — `tc_penalty=0.0` (the new default) reproduces the friction-free behaviour.
+
+`03_backtest.py` now passes `tc_penalty = config["env"]["transaction_cost_penalty"]` to both call sites (walk-forward stitching and single-split). After this fix, the stage 3 equity curve drops from $308.6M to ~$273M (CAGR 9.3%). The gap to stage 4 collapses to ~54 pp = pure backtrader execution friction (~3 pp/yr).
+
+**Implication for kill-switch tripwires.** The walk-forward distribution computed BEFORE this fix was inflated by ~1 pp/yr CAGR and ~0.1–0.2 Sharpe. Re-run the walk-forward after the fix; use the new distribution for live monitoring.
+
+**A.20.4 Execution filters — HOLD vs REBALANCE (Option B)**
+
+PPO trained with `transaction_cost_penalty=0.001` still produces ~5% L1 turnover per day = ~600% annualised one-way. That signal IS the model's view, but executing every tiny daily delta is wasteful. Two knobs in `config_production.json` decide whether the daily inference results in trades or a no-op:
+
+| Knob                          | Default | Semantics |
+|---|---|---|
+| `execution.rebalance_band`    | 0.02    | Portfolio-level L1 drift threshold. If `sum(|target - current|) < band`, skip the day entirely (HOLD). |
+| `execution.min_weight_delta`  | 0.02    | Per-ticker freeze. Any ticker whose `|target - current| < min_weight_delta` is pinned at current. Mirrors backtrader's `execution.min_weight_delta`. |
+
+Both apply ONLY when `predict_tomorrow.py` is called with `--current-weights <csv>`. The user provides their actual broker portfolio weights each evening; the script compares them to the model's proposed target and outputs one of:
+
+| Condition                                                            | Decision  | Trades |
+|---|---|---|
+| L1 drift < `rebalance_band`                                          | HOLD      | 0 |
+| L1 drift ≥ band AND every per-ticker delta < `min_weight_delta`      | HOLD      | 0 |
+| L1 drift ≥ band AND ≥ 1 per-ticker delta ≥ `min_weight_delta`        | REBALANCE | N |
+
+Frozen tickers stay EXACTLY at their current weight (not at the model's target). Renormalisation absorbs only into the unfrozen subset, so no nuisance ±0.1% drift creeps into frozen positions.
+
+Empirically with `0.02` for both knobs and ~5% daily turnover, this turns ~40–60% of trading days into HOLDs and substantially reduces execution friction in production. The savings compound over time vs always executing every daily delta.
+
+**A.20.5 New scripts and helpers**
+
+| File | Role |
+|---|---|
+| `config_production.json` | Single-split deployment config + execution filter knobs |
+| `predict_tomorrow.py` | Daily inference: fetch live Yahoo data, recompute features, run ensemble, apply execution filters, emit HOLD/REBALANCE |
+| `inspect_ensemble.py` | Per-seed weight comparison + agreement verdict before deploying |
+| `filter_seeds.py` | Rank trained candidates by convergence (for choosing `ensemble_size`) |
+| `utils.pick_ensemble_seeds()` | Filter top-N converged seeds from `seeds.list` at inference time |
+| `utils.daily_return_from_weights(..., tc_penalty=...)` | Drift-adjusted TC formula now applied to multi-seed ensemble curves |
+
+See `USAGE_LIVE_TRADING.md` for the full operations manual: one-time setup, daily 3:30–3:55 pm workflow, retraining cadence, kill-switch metrics, failure modes, and the 30–90 day paper trading phase.
