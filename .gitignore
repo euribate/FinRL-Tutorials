@@ -30,3 +30,6 @@ env/
 **/df_actions.csv
 **/df_daily_return.csv
 **/*.pkl
+
+# Live-trading runtime state (user-specific, rewritten daily)
+**/current_weights.csv
