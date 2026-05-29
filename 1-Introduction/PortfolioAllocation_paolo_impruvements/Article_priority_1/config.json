@@ -81,7 +81,12 @@
         "use_sde":       false,
         "sde_sample_freq": -1
       },
-      "policy_kwargs": null
+      "policy_kwargs": {
+        "features_extractor": "per_asset",
+        "features_extractor_kwargs": { "hidden": 32, "emb_dim": 1, "cross_sectional": true, "layers": 2 },
+        "net_arch": { "pi": [], "vf": [64, 64] }
+      },
+      "_policy_kwargs_notes": "CURRENTLY ACTIVE: per-asset shared encoder (README A.22) - one shared MLP scores each asset from its OWN feature column, so the policy can differentiate instead of collapsing to equal weight. TO SWITCH BACK to the default flatten-then-MLP baseline, set the whole policy_kwargs value to null (i.e. \"policy_kwargs\": null). Only the key named 'policy_kwargs' is read by the code; keys starting with '_' are ignored. features_extractor: 'per_asset'|'mlp'|null; features_extractor_kwargs tunes the shared MLP (hidden width, emb_dim=scores-per-asset, cross_sectional centering, layers); net_arch pi=[] keeps the policy head minimal while vf gives the value head capacity."
     },
     "ddpg": {
       "use": false,

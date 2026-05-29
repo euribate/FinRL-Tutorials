@@ -772,11 +772,33 @@ def resolve_activation(name: str) -> type:
 
 
 def parse_policy_kwargs(policy_kwargs: dict | None) -> dict | None:
+    """Resolve config policy_kwargs into SB3 form.
+
+    Handles:
+      * activation_fn string -> torch.nn class.
+      * features_extractor: "per_asset" -> the PerAssetSharedEncoder class
+        (with any features_extractor_kwargs passed through). "mlp"/"flatten"/
+        null/absent keep SB3's default flatten-then-MLP extractor.
+      * net_arch dict {"pi": [...], "vf": [...]} is passed through unchanged.
+    """
     if not policy_kwargs:
         return None
     parsed = dict(policy_kwargs)
     if isinstance(parsed.get("activation_fn"), str):
         parsed["activation_fn"] = resolve_activation(parsed["activation_fn"])
+
+    fe = parsed.pop("features_extractor", None)
+    if fe in (None, "mlp", "flatten"):
+        pass  # SB3 default flatten + MLP
+    else:
+        from policies import FEATURE_EXTRACTORS
+        if fe not in FEATURE_EXTRACTORS:
+            raise ValueError(
+                f"Unknown features_extractor={fe!r}; expected one of "
+                f"{sorted(FEATURE_EXTRACTORS)} or null/'mlp'."
+            )
+        parsed["features_extractor_class"] = FEATURE_EXTRACTORS[fe]
+        # features_extractor_kwargs (if any) are left in `parsed` as-is.
     return parsed
 
 

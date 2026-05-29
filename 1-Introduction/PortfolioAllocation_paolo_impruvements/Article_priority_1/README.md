@@ -950,3 +950,33 @@ Practical upshot: govern executed-trade count with the execution band (`min_weig
 | `utils.load_benchmark_returns` / `benchmark_label` | Shared benchmark series/label for stages 3/4/5 |
 
 The mandatory tuning cycle (each λ change): **edit `config.json` → `02_train.py` → `03_backtest.py` → `inspect_policy.py`**. `λ_TO`/`λ_conc` only affect TRAINING, so re-running stage 3 alone (or `inspect_policy` alone) shows the *previous* policy — `inspect_policy.py` prints a loud STALE-WEIGHTS warning when `weights_ppo.csv` is older than the newest model to catch exactly this.
+
+### A.22 Per-asset shared encoder (optional policy)
+
+**Why.** The A.21.6 diagnostics showed the default policy emits near-equal weights *uncorrelated with the per-asset features* (`inspect_policy.py`: weight↔`mom_20` correlation ≈ 0) — under *every* reward. Root cause is architectural, not the objective: SB3's default `MlpPolicy` flattens the (n_rows, n_assets) state into one long vector, scattering each asset's feature column across the input and diluting it among the 121 covariance entries. The network has no notion of "asset", so the easy optimum is constant logits → equal weight.
+
+**The state's structure.** Column *j* of the (39, 11) observation is asset *j*'s full feature vector (its covariance row + 28 indicators). The fix keeps that structure instead of flattening it away.
+
+**`PerAssetSharedEncoder` (`policies.py`).** A custom SB3 `BaseFeaturesExtractor` selected via `policy_kwargs`:
+```
+obs (B, 39, 11) → transpose → (B, 11 assets, 39 features)
+  → shared MLP f: 39 → hidden → hidden → emb_dim   (ONE set of weights, applied to every asset)
+  → (B, 11, emb_dim)
+  → [optional] subtract cross-asset mean (cross-sectional comparison)
+  → flatten → (B, 11·emb_dim)  = features
+```
+With `emb_dim=1` it emits one score per asset (features_dim = 11). The shared weights mean the network learns a single "features → score" rule (updated with 11 assets' worth of gradient per step) and asset *j*'s score depends only on asset *j*'s features — so it *can* differentiate. This is the per-asset / cross-sectional half of the article's encoder, minus the expensive learned temporal part (see `Articles/2605.17307v1_review_and_comparison.md` for why the temporal LSTM/Transformer is deferred: ~1000× compute, a full observation rewrite, more overfitting, and the paper's own results show it barely beats equal-weight).
+
+**How to enable.** Default is `models.ppo.policy_kwargs: null` (plain MLP, so prior results reproduce). Copy the `_policy_kwargs_example` block into `policy_kwargs`:
+```json
+"policy_kwargs": {
+  "features_extractor": "per_asset",
+  "features_extractor_kwargs": { "hidden": 32, "emb_dim": 1, "cross_sectional": true, "layers": 2 },
+  "net_arch": { "pi": [], "vf": [64, 64] }
+}
+```
+`net_arch.pi=[]` keeps the policy head a minimal `Linear(11→11)` on the already-per-asset, cross-sectionally-centred scores; `vf=[64,64]` gives the value head capacity. `parse_policy_kwargs` resolves `features_extractor: "per_asset"` to the class; `null`/`"mlp"` keep the default.
+
+**Caveat.** SB3's final action head is still a dense `Linear`, so a small residual cross-asset mix remains at the very last layer (with `emb_dim=1` it's an 11×11 map the optimiser can drive toward identity). A fully per-asset action head needs a custom policy *class*; this extractor is the cheap, `policy_kwargs`-selectable first step.
+
+**A/B test.** Train with `policy_kwargs: null` and again with the per_asset block, then compare `inspect_policy.py`. The decisive signal is the weight↔feature correlation and the within-day spread: if they move meaningfully off ~0, the per-asset structure unlocked signal-driven allocation. If they *still* collapse to equal-weight even with the right architecture, that's strong evidence the per-asset edge genuinely isn't there for these 10 ETFs daily (the paper's conclusion, now properly earned rather than confounded by a weak network). It only affects TRAINING, so use the full cycle: edit → `02_train` → `03_backtest` → `inspect_policy`.
