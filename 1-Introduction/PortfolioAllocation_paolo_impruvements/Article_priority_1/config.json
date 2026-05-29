@@ -1,0 +1,193 @@
+  {
+  "data": {
+    "ticker_list": [
+      "IVE", "QQQ", "TLT", "SHY", "LQD", "HYG", "GLD", "EEM", "VNQ", "XLE"
+    ],
+    "download_start_date": "2007-05-01",
+    "train_start_date":    "2009-01-01",
+    "train_end_date":      "2020-07-01",
+    "trade_start_date":    "2020-07-01",
+    "trade_end_date":      "2026-05-20",
+    "indicators": [
+      "macd", "boll_ub", "boll_lb",
+      "rsi_30", "cci_30", "dx_30",
+      "close_30_sma", "close_60_sma"
+    ],
+    "custom_features": {
+      "per_asset": [
+        "mom", "vol", "bb_pctb", "dist_high_20", "meanrev_20", "beta_60",
+        "xsec_mom_rank", "downside_semidev_20", "drawdown_60"
+      ],
+      "global": [
+        "vix", "xsec_avg_ret", "breadth", "mkt_ret"
+      ],
+      "params": {},
+      "_notes": "Custom features computed in stage 1 by features.py and appended to the env state alongside 'indicators' above. 'per_asset' keys produce one value PER TICKER per date (one state row each); 'global' keys produce one value broadcast across all tickers per date (the paper's market-wide features). Each key may emit several columns (e.g. 'mom' -> mom_1/mom_5/mom_20/mom_60, 'vol' -> std_5/std_20, 'vix' -> vix/vix_chg5, 'xsec_avg_ret' -> xsec_avg_ret/xsec_avg_ret_vol5, 'mkt_ret' -> mkt_ret_5/mkt_ret_20). To add a new feature: write a builder in features.py, @register it, then list its key here. 'params' overrides builder defaults (e.g. {\"beta_window\": 90}). Set both lists to [] to fall back to the indicators-only state of folder 8. The 60-day rolling beta and global market-proxy returns use the benchmark defined in the 'benchmark' block below.",
+      "_paper_vs_suggested": "Paper features: mom (1/5/20/60), vol (5/20), bb_pctb, dist_high_20, meanrev_20, beta_60, plus globals vix, xsec_avg_ret, breadth, mkt_ret. Suggested additions (not in the paper): xsec_mom_rank (scale-free cross-sectional momentum rank), downside_semidev_20 (downside-only volatility), drawdown_60 (trailing-peak drawdown). Drop the suggested keys from per_asset to match the paper exactly."
+    },
+    "lookback": 252,
+    "use_turbulence": true
+  },
+
+  "env": {
+    "hmax": 100,
+    "initial_amount": 100000000,
+    "transaction_cost_pct": 0.001,
+    "reward_scaling": 1.0,
+    "reward_mode": "diff_sharpe",
+    "transaction_cost_penalty": 0.001,
+    "turnover_mode": "naive",
+    "_turnover_mode_notes": "How the env measures turnover (drives BOTH the transaction_cost_penalty deduction and the article reward's lambda_to penalty). 'naive' (DEFAULT, article-faithful) = |w_target - w_previous_target|, i.e. the change in the agent's TARGET weights, exactly as Kashif & Slepaczuk 2026 define it. 'drift_adjusted' = |w_target - w_drift| where w_drift is the previous weights after one bar of per-ticker price drift; this charges the real rebalancing trade and matches a broker's commission base, but deviates from the article. Use 'naive' to keep the training signal aligned with the paper (backtrader / stage 4 remains the realistic execution check); use 'drift_adjusted' if you want the env's analytical cost to mirror the broker. Earlier folders (8) used drift_adjusted; this folder defaults to naive.",
+    "diff_ratio_eta": 0.00396825,
+    "article_reward": {
+      "return_scale":  1000.0,
+      "lambda_to":     0.0005,
+      "lambda_conc":   0.0,
+      "_notes": "Coefficients for the article reward modes (Kashif & Slepaczuk 2026), used only when reward_mode is 'article_absolute' or 'article_benchmark'. Formula: r = return_scale * log(1+r_net) [minus log(1+r_bench) for the benchmark variant] - lambda_to * turnover * 100 - lambda_conc * (HHI - 1/N) * 100, where r_net is the return already net of the drift-adjusted transaction cost (env.transaction_cost_penalty), turnover is the drift-adjusted L1 turnover, HHI = sum(w_i^2) is the Herfindahl concentration of the target weights, and N is the number of weights (incl. cash if enabled). NOTE: turnover is charged TWICE on purpose, exactly as in the paper - once as the real cost inside r_net, once as the lambda_to shaping penalty. Paper defaults: return_scale=1000, lambda_to=0.003, lambda_conc in {0.0, 0.1, 0.5} (0.1 chosen here). The benchmark variant uses the benchmark defined in the 'benchmark' block.",
+      "_lambda_conc_note": "0.0 disables the concentration penalty (agent free to concentrate); 0.1 mild diversification pressure; 0.5 strong push toward equal weight (HHI_min = 1/N)."
+    },
+    "_reward_mode_notes": "'value' = upstream StockPortfolioEnv (reward = portfolio value). 'log_return' = log(1 + return) * reward_scaling. 'diff_sharpe' = Moody & Saffell differential Sharpe ratio. 'diff_sortino' = differential Sortino variant. 'article_absolute' (DEFAULT) = paper's absolute reward (scaled log-return minus turnover and concentration penalties). 'article_benchmark' = paper's benchmark-relative reward (scaled log-return MINUS scaled benchmark log-return, same penalties). All five remain available; article_absolute is the default per the priority-1 article-feature work.",
+    "_transaction_cost_penalty_notes": "Per-unit-turnover cost rate, where 'turnover' is now DRIFT-ADJUSTED (folder 8 only - earlier folders used a naive formula that under-charged). Math: w_drift_i = w_prev_i * (1+r_i)/(1+R); turnover = |w_target - w_drift|.sum(); tc_fraction = transaction_cost_penalty * turnover; net_return = (1 + gross)*(1 - tc_fraction) - 1. This makes the env's cost model match backtrader's commission base exactly - a buy-and-hold strategy now correctly incurs cost for the rebalancing required to maintain target weights against per-ticker price drift, instead of showing zero turnover as it did in earlier folders. To align with backtrader, set transaction_cost_penalty = broker.commission.value + broker.slippage.value (i.e., 0.0015 if commission=0.001 and slippage=0.0005). Set to 0.0 to disable.",
+    "_diff_ratio_eta_notes": "EMA decay for the running A (mean return), B (mean R^2), D (mean downside R^2) moments used by diff_sharpe and diff_sortino. Default 1/252 = 0.00396825 corresponds to a one-trading-year half-life. Larger eta = faster adaptation but more noise; smaller = smoother but slower to track regime changes. Has no effect when reward_mode is 'value' or 'log_return'."
+  },
+
+  "models": {
+    "a2c": {
+      "use": false,
+      "total_timesteps": 50000,
+      "model_kwargs": {
+        "n_steps": 5,
+        "ent_coef": 0.005,
+        "learning_rate": 0.0002
+      },
+      "policy_kwargs": null
+    },
+    "ppo": {
+      "use": true,
+      "total_timesteps": 150000,
+      "model_kwargs": {
+        "n_steps": 1024,
+        "ent_coef": 0.01,
+        "learning_rate": 0.0002,
+        "batch_size": 128,
+        "gamma": 0.999,
+        "clip_range": 0.3,
+        "n_epochs": 10,
+        "clip_range_vf": null,
+        "gae_lambda": 0.95,
+        "vf_coef": 0.5,
+        "max_grad_norm": 0.5,
+        "target_kl":     null,
+        "use_sde":       false,
+        "sde_sample_freq": -1
+      },
+      "policy_kwargs": null
+    },
+    "ddpg": {
+      "use": false,
+      "total_timesteps": 50000,
+      "model_kwargs": {
+        "batch_size": 128,
+        "buffer_size": 50000,
+        "learning_rate": 0.001
+      },
+      "policy_kwargs": null
+    },
+    "sac": {
+      "use": false,
+      "total_timesteps": 50000,
+      "model_kwargs": {
+        "batch_size": 128,
+        "buffer_size": 100000,
+        "learning_rate": 0.0003,
+        "learning_starts": 100,
+        "ent_coef": "auto_0.1"
+      },
+      "policy_kwargs": null
+    },
+    "td3": {
+      "use": false,
+      "total_timesteps": 30000,
+      "model_kwargs": {
+        "batch_size": 100,
+        "buffer_size": 1000000,
+        "learning_rate": 0.001
+      },
+      "policy_kwargs": null
+    }
+  },
+
+  "training": {
+    "seed": 42
+  },
+
+  "seeds": {
+    "list": [42],
+    "_notes": "Improvement #8: multi-seed training + ensembled actions. Stage 2 trains one model per (algo, window, seed) - models are saved as agent_<algo>[_w<i>]_s<seed>.zip. Stage 3 loads ALL seeds for each window, runs each, averages the post-softmax weights row-by-row, and computes portfolio_return from the averaged weights. A single-element list reproduces the single-seed behaviour of folder 7 modulo the `_s<seed>` filename suffix. Setting this to null/absent falls back to a singleton list with training.seed for backward compatibility. Training time scales linearly with len(list); 3 seeds is the recommended starting point - reduces seed-noise std on out-of-sample Sharpe by ~30-50% at 3x training cost."
+  },
+
+  "baselines": {
+    "min_variance": {
+      "weight_bounds": [0, 0.3]
+    },
+    "dji_ticker": "^DJI"
+  },
+
+  "benchmark": {
+    "type":   "equal_weight",
+    "ticker": "^DJI",
+    "_notes": "Defines the benchmark used by THREE things: (1) the 'article_benchmark' reward mode, (2) the per-asset beta_60 feature, (3) the global mkt_ret_5/mkt_ret_20 features. type='equal_weight' (DEFAULT) builds a daily-rebalanced equal-weight portfolio of the universe tickers and uses its daily return as the benchmark - contemporaneous, no look-ahead. type='ticker' downloads 'ticker' (e.g. ^DJI, ^GSPC, SPY) and uses its daily return instead. Stage 1 writes the resulting series to a 'benchmark_return' column (broadcast per date) consumed downstream. This is separate from baselines.dji_ticker, which only controls the DJIA overlay drawn in the stage-3 equity plot."
+  },
+
+  "paths": {
+    "data_dir":        "data",
+    "model_dir":       "models",
+    "results_dir":     "results",
+    "tensorboard_dir": "tensorboard"
+  },
+
+  "walk_forward": {
+    "enabled": true,
+    "auto": {
+      "train_years": 6,
+      "eval_years":  1,
+      "step_years":  1
+    },
+    "windows": null,
+    "_notes": "When enabled=true: stage 2 trains a fresh model per window (saved as models/agent_<algo>_w<i>.zip + a windows.json manifest), and stage 3 stitches per-window predictions into a single continuous out-of-sample equity curve. If 'windows' is a non-null list of [train_start, train_end, eval_start, eval_end] 4-tuples (ISO date strings), it overrides 'auto'. Otherwise windows are auto-generated by sliding a (train_years, eval_years) window forward by step_years from data.train_start_date until eval_start hits data.trade_end_date. Setting enabled=false reproduces the single-split behaviour of ../2.transaction_cost/. Stage 4 (backtrader) does NOT currently swap models per window; it loads only the last window's agent and replays the full out-of-sample period - see README appendix A.13."
+  },
+
+  "early_stopping": {
+    "enabled":      true,
+    "val_fraction": 0.1,
+    "eval_freq":    2500,
+    "patience":     20,
+    "min_delta":    0.001,
+    "_val_fraction_notes": "Fraction of each window's TRAINING dates reserved as the validation slice (the last val_fraction of dates, in chronological order). Inside the training range - NOT inside the eval range. Default 0.1 reserves ~6 months out of each 6-year window for ES Sharpe monitoring. Increase (e.g. 0.20) for a more stable Sharpe estimate at the cost of less training data; decrease (e.g. 0.05) for the opposite. Recommended range 0.05-0.30. Hard error outside (0, 1). See walk_forward_time_split_and_early_stopping.md at the project root for detailed effects and trade-offs.",
+    "_notes": "Reserves the last `val_fraction` of every training slice as a validation set. Every `eval_freq` training timesteps, the current policy is rolled deterministically through the validation slice and annualised Sharpe is computed from portfolio_return_memory. If Sharpe improves by >= `min_delta`, the current model is saved (overwriting models/agent_<algo>[_w<i>][_s<seed>].zip) and the patience counter resets. After `patience` consecutive evaluations without improvement, training stops early - the best checkpoint stays on disk. In walk-forward mode each window gets its own validation slice (the last val_fraction of that window's train range), so no eval-period data leaks into training. Set enabled=false to fall back to the fixed total_timesteps behaviour of ../4.Sharpe Sortino Ratio/. A per-run history JSON (timesteps, sharpe, improved) is written alongside the model as models/agent_<algo>[_w<i>][_s<seed>].history.json for inspection."
+  },
+
+  "normalization": {
+    "enabled":     true,
+    "norm_obs":    true,
+    "norm_reward": false,
+    "clip_obs":    10.0,
+    "clip_reward": 10.0,
+    "epsilon":     1e-8,
+    "gamma":       0.99,
+    "_notes": "Wraps the training env in stable_baselines3.common.vec_env.VecNormalize, which maintains running mean/std of observations (945-dim flattened cov + indicator state) and rewards. Per-step normalisation is reward = (reward - 0) / sqrt(ret_rms.var + eps), obs = clip((obs - obs_rms.mean) / sqrt(obs_rms.var + eps), -clip_obs, clip_obs). Stats are persisted next to each saved model as models/vecnormalize_<algo>[_w<i>].pkl (small - just the running mean/var arrays, NOT the wrapped env) and reloaded at inference. Without this, the 945-dim observation mixes covariance entries (O(1e-3)) with Bollinger Bands (at $100+ levels) and RSI (0-100), which is poison for an MLP. clip_obs and clip_reward cap the per-dim normalised values; epsilon and gamma are SB3 defaults and rarely need tuning. Setting enabled=false reproduces ../5.Early stopping on validation Sharpe/ exactly. The early-stopping callback uses a frozen snapshot of the training stats for each validation rollout so the policy sees on-distribution observations during eval."
+  },
+
+  "risk_off": {
+    "enabled":              true,
+    "turbulence_threshold": 80.0,
+    "_notes": "Improvement #7: non-learned safety valve. When data.use_turbulence=true, stage 1 attaches a FinRL-computed turbulence index to every row. In LogReturnPortfolioEnv.step(), if turbulence on the current bar > turbulence_threshold, the agent's softmaxed weights are overridden to go to cash BEFORE the TC penalty and reward shaping run. When cash.enabled=true the override puts 100% in the CASH asset; otherwise it zeroes the stock weights. The portfolio earns ~0% on that day, and the TC penalty charges turnover to liquidate / re-enter. Same threshold applied during training and inference. Set enabled=false to disable. With an explicit cash asset (cash block below) you may prefer to disable this gate and let the agent learn when to hold cash itself."
+  },
+
+  "cash": {
+    "enabled":         true,
+    "risk_free_rate":  0.0,
+    "ticker":          "CASH",
+    "_notes": "Improvement (article priority-1): add an explicit CASH position so the agent allocates across N risky ETFs PLUS cash (N+1 weights summing to 1). Implemented as a SYNTHETIC asset injected by stage 1: a ticker named by 'ticker' whose price grows at the daily-compounded risk_free_rate (so its daily return is constant and its variance/covariance are ~0). Because cash is just another asset in the dataframe, the env's action space, softmax, covariance state, and portfolio-return accounting become N+1 automatically with no env surgery. risk_free_rate is ANNUAL (0.0 = cash earns nothing, paper-style; e.g. 0.04 models a 4% money-market yield). Downstream handling: stage 3 Min-Variance baseline EXCLUDES the cash ticker (zero-variance row makes the covariance singular); stage 4 backtrader does NOT submit an order for the cash ticker (the broker simply holds the un-invested fraction as cash); predict_tomorrow.py reports the cash weight as a CASH row. IMPORTANT: when enabled=true, backtrader_config.json execution.cash_buffer MUST be 0.0, otherwise cash is double-counted (once as a weight here, once as the broker buffer). Set enabled=false to reproduce the fully-invested N-asset behaviour of folder 8."
+  }
+}
