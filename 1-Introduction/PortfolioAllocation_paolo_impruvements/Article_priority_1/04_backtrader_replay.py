@@ -349,6 +349,24 @@ def export_outputs(strat: WeightReplayStrategy, bt_cfg: dict,
                     curve = bt_cfg["broker"]["initial_cash"] * (1.0 + bret).cumprod()
                     ax.plot(curve.index, curve.values, label=label,
                             linewidth=1.2, alpha=0.85, linestyle="--")
+                    # Cash-inclusive EqualWeight overlay (mirrors stage-3
+                    # EqualWeight_w_Cash). Since CASH earns 0%, a daily-rebalanced
+                    # 1/(M+1) portfolio of M risky + cash has daily return
+                    # r' = M/(M+1) * r_eq_no_cash exactly. Controlled by
+                    # benchmark.show_cash_inclusive (default true); applied only
+                    # when the benchmark is equal_weight AND cash is enabled.
+                    bench_cfg_l = src_cfg.get("benchmark", {}) or {}
+                    cash_cfg_l  = src_cfg.get("cash", {}) or {}
+                    if (bench_cfg_l.get("show_cash_inclusive", True)
+                            and cash_cfg_l.get("enabled", False)
+                            and bench_cfg_l.get("type", "equal_weight") == "equal_weight"):
+                        M = len(src_cfg.get("data", {}).get("ticker_list", []) or [])
+                        if M > 0:
+                            bret_wc  = (M / (M + 1)) * bret
+                            curve_wc = bt_cfg["broker"]["initial_cash"] * (1.0 + bret_wc).cumprod()
+                            ax.plot(curve_wc.index, curve_wc.values,
+                                    label=f"{label} w/ Cash",
+                                    linewidth=1.0, alpha=0.75, linestyle=":")
                 except Exception as e:
                     print(f"Benchmark overlay failed (non-fatal): {e}")
             ax.set_title("Portfolio Equity - Backtrader Replay (recorded weights)")

@@ -387,8 +387,16 @@ def main() -> None:
     btype = bench_cfg.get("type", "equal_weight")
     if btype == "equal_weight":
         print("Computing Equal-Weight baseline...")
+        # Standard EqualWeight (fully invested, excludes CASH).
         equity["EqualWeight"] = compute_equal_weight_baseline(
             eval_df, initial, exclude_tickers=exclude)
+        # Cash-inclusive EqualWeight (1/(M+1) across the M risky tickers + CASH).
+        # Isolates the agent's pure allocation skill from the cash drag. Controlled
+        # by benchmark.show_cash_inclusive (default true), and only emitted when
+        # cash.enabled=true - otherwise it would be identical to EqualWeight.
+        if bench_cfg.get("show_cash_inclusive", True) and cash_cfg.get("enabled", False):
+            equity["EqualWeight_w_Cash"] = compute_equal_weight_baseline(
+                eval_df, initial, exclude_tickers=None)
     else:
         bt_ticker = bench_cfg.get("ticker", config["baselines"]["dji_ticker"])
         print(f"Computing benchmark-ticker baseline ({bt_ticker})...")

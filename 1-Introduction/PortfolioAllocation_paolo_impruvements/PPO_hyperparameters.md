@@ -195,43 +195,136 @@ Leave at default unless training diverges visibly (NaN losses, exploding actions
 
 ---
 
-## 11. policy_kwargs.net_arch
+## 11. policy_kwargs (architecture)
 
-Shape of the MLP that maps observation -> action mean / value estimate. The observation is 945-dimensional (27×27 covariance block + 8×27 indicator rows, flattened).
+Shape of the network that turns the observation into action logits and a value estimate. **Folder *Article_priority_1* replaces SB3's default "flatten the observation → MLP" path with a custom per-asset shared encoder followed by minimal heads.** What used to be a single `net_arch` knob is now five coupled knobs sitting in two layers.
 
-| Setting | What happens |
-|---|---|
-| `[64, 64]` (SB3 default; `null` -> this) | Small, fast, possibly underfits a 945-dim observation. |
-| `[128, 128]`                              | Bigger; usually no overfitting for this dataset size. |
-| `[256, 256]`                              | Larger; needs more timesteps; may overfit per window. |
-| `[128, 128, 64]`                          | Deeper, narrowing. |
-| `{"pi": [128, 128], "vf": [128, 128]}`    | Separate policy and value heads. Often best for actor-critic. |
+### The two layers and their five knobs
 
-Recommended: **`{"pi": [128, 128], "vf": [128, 128]}`**.
+**Encoder** — `features_extractor: "per_asset"` (resolves to `PerAssetSharedEncoder` in `policies.py`). Applies the same MLP to each asset's feature column independently, then optionally subtracts the cross-asset mean. Output shape: `emb_dim` numbers per asset.
 
-Concrete JSON value:
+- `features_extractor_kwargs.hidden`          — width of the shared MLP (default `128`)
+- `features_extractor_kwargs.emb_dim`         — scores produced per asset (default `1`)
+- `features_extractor_kwargs.layers`          — depth of the shared MLP (default `2`)
+- `features_extractor_kwargs.cross_sectional` — subtract cross-asset mean before the head (default `true`)
+
+**Heads** — `net_arch`.
+
+- `net_arch.pi` — policy head hidden layers (default `[]` = linear projection from encoder output → action logits → softmax weights)
+- `net_arch.vf` — value head hidden layers (default `[64, 64]`)
+
+### Why `pi=[]` is intentional, not underfitting
+
+With `emb_dim=1` the encoder already produces one score per asset; a *linear* projection from those scores to N+1 action logits is exactly the right operation — it just permutes per-asset scores into a softmax over assets. Adding hidden layers to `pi` would let the head re-mix per-asset signals, fighting the encoder's per-asset symmetry; the sweep evidence is that it hurts (`mlp_policy`, `enc_hidden*_emb_dim4/8` rows are all worse).
+
+The value head is different: it has to produce a scalar V(s), which has no asset-symmetric structure, so a small MLP (`[64, 64]`) is appropriate.
+
+### Empirical recommendation (sweep-validated)
+
+| Knob | Value | Status |
+|---|---|---|
+| `hidden` | **128** | Best of 16/32/64/128/192/256 in the sweep |
+| `emb_dim` | **1** | `emb_dim>1` added turnover without earning Sharpe |
+| `layers` | **2** | Default; not yet swept |
+| `cross_sectional` | **true** | Default; theoretically sound, not yet ablated |
+| `net_arch.pi` | **`[]`** | Default; theoretically sound, not yet ablated |
+| `net_arch.vf` | **`[64, 64]`** | Default; not yet swept |
+
+This is the `enc_hidden128_emb_dim1` config — winner of the 47-experiment sweep with env Sharpe **0.774**, bt Sharpe **0.782**, ann turnover **0.85×** (~6× lower than the runner-up architectures). Currently the default in `config.json`.
+
+### Concrete JSON
+
 ```
 "policy_kwargs": {
-  "net_arch":      {"pi": [128, 128], "vf": [128, 128]},
-  "activation_fn": "Tanh"
+  "features_extractor": "per_asset",
+  "features_extractor_kwargs": { "hidden": 128, "emb_dim": 1, "cross_sectional": true, "layers": 2 },
+  "net_arch": { "pi": [], "vf": [64, 64] }
 }
 ```
 
-Expected effect: training time goes up ~20–30% per step (bigger forward/backward passes), but the agent can express more nuanced allocation policies. Worth it for the 945-dim observation.
+### Reverting to the legacy "flatten + MLP" path
+
+Set `"policy_kwargs": null`. SB3 will use its default: flatten the observation into a single vector and run it through `[64, 64]` MLPs for both heads. The sweep tested this explicitly as `mlp_policy` — it produced the **worst turnover** (5.98×/yr) and a lower Sharpe (0.689). The legacy advice of `{"pi": [128, 128], "vf": [128, 128]}` from earlier versions of this doc applies *only* to that path; it does not improve the encoder path.
+
+### Dotted-path overrides (for `experiments.json`)
+
+| Knob | Dotted path |
+|---|---|
+| Encoder width | `models.ppo.policy_kwargs.features_extractor_kwargs.hidden` |
+| Encoder embedding | `models.ppo.policy_kwargs.features_extractor_kwargs.emb_dim` |
+| Encoder depth | `models.ppo.policy_kwargs.features_extractor_kwargs.layers` |
+| Cross-sectional centring | `models.ppo.policy_kwargs.features_extractor_kwargs.cross_sectional` |
+| Policy head | `models.ppo.policy_kwargs.net_arch.pi` |
+| Value head | `models.ppo.policy_kwargs.net_arch.vf` |
+
+Use explicit entries in the `"experiments"` array for `net_arch.pi` / `net_arch.vf` (grids auto-name from list values, producing ugly names like `pi[64, 64]`). Use the `"grid"` block for scalar sweeps on `hidden`, `emb_dim`, `layers`.
+
+### What's still worth sweeping
+
+Most of the encoder size space is exhausted; a few axes haven't been probed:
+
+1. **`net_arch.pi`** in `[[], [32], [64], [64, 64]]` — the linear head is the most contrarian setting; testing one or two hidden-head variants confirms or refutes the "the encoder does the work" hypothesis. **Most informative single change.**
+2. **`features_extractor_kwargs.layers`** in `[1, 2, 3]` — depth was held at 2 throughout the sweep.
+3. **`cross_sectional`** in `[true, false]` — single-knob ablation; should validate the cross-sectional contrast is providing structural lift.
+4. **`net_arch.vf`** in `[[64], [64, 64], [128, 128]]` — value-head capacity has not been swept.
+
+Honest expectation given the sweep ceiling: ±0.02 Sharpe range, not a breakthrough — architecture has hit its ceiling for this problem, and the path to material gains is regime/selection (see `NEXT_STEPS.md`), not more architecture tuning.
 
 ---
 
 ## 12. policy_kwargs.activation_fn
 
-Nonlinearity in the MLP hidden layers.
+Nonlinearity used in the MLPs. **With the current per-asset encoder architecture there are TWO independent places where activation matters**, controlled by two different config keys.
+
+> Context note: see section 11 for the per-asset encoder architecture this section assumes. With the legacy "flatten + MLP" path (`policy_kwargs: null`) only the head `activation_fn` matters and the encoder section below is not applicable.
+
+### A. Encoder activation (per-asset shared MLP)
+
+Path: `models.ppo.policy_kwargs.features_extractor_kwargs.activation`
+Default: **`"ReLU"`** (defined in `policies.py:PerAssetSharedEncoder`).
+
+Used between the layers of the shared 2-layer MLP that maps each asset's per-column feature vector (covariance row + indicators + custom features) to its `emb_dim`-dim embedding. The same MLP is applied to every asset, so this activation runs once per asset per step.
 
 | Setting | What happens |
 |---|---|
-| `"Tanh"` (SB3 default, recommended for PPO) | Bounded outputs, stable with normalised observations. |
-| `"ReLU"`                                    | Faster but can produce dead neurons; less stable here. |
-| `"ELU"`                                     | Smoother variant of ReLU. Compromise. |
+| `"ReLU"` (default, recommended) | Fast, sparse. Each asset's column is already bounded and reasonably scaled (vol, momentum, beta, indicators), so ReLU's saturation issues are mild. Empirically the winner in your sweep. |
+| `"Tanh"`                         | Smoother, bounded; worth testing if encoder scores look noisy when you push `emb_dim` > 1. |
+| `"ELU"` / `"GELU"`              | Smoother ReLU variants. Likely marginal in this setup. |
 
-Stick with **Tanh** for PPO portfolio allocation. ReLU is mostly for image-based RL.
+### B. Head activation (the `pi` and `vf` MLPs after the encoder)
+
+Path: `models.ppo.policy_kwargs.activation_fn`
+Default: **`"Tanh"`** (SB3 PPO default).
+
+Used inside the policy and value heads that sit *after* the encoder.
+
+| Setting | What happens |
+|---|---|
+| `"Tanh"` (SB3 default, recommended) | Bounded outputs, stable in actor-critic settings. Right choice for the small `vf=[64,64]` head. |
+| `"ReLU"`                            | Faster but less stable for a small value head; not recommended here. |
+| `"ELU"`                             | Compromise. Rarely makes a meaningful difference. |
+
+**Important interaction with `net_arch.pi`**: with `pi: []` (the current linear policy head) this knob affects **only the value head** — the policy head has no hidden layers to activate. If you add hidden layers to `pi` (e.g. `[64, 64]`), the same `activation_fn` applies to both heads.
+
+### What this looks like in the current config
+
+```json
+"policy_kwargs": {
+  "features_extractor": "per_asset",
+  "features_extractor_kwargs": {
+    "hidden": 128, "emb_dim": 1, "cross_sectional": true, "layers": 2
+    // "activation": "ReLU"     ← encoder default; uncomment to override
+  },
+  "net_arch": { "pi": [], "vf": [64, 64] }
+  // "activation_fn": "Tanh"    ← head default; uncomment to override
+}
+```
+
+### Recommendation
+
+**Keep both at their defaults — `ReLU` in the encoder, `Tanh` in the head.** That's the pairing that produced your best result (`enc_hidden128_emb_dim1`: env Sharpe 0.774, bt Sharpe 0.782, lowest turnover in the 47-experiment sweep). Activation is **not** the binding constraint for this problem.
+
+If you do want to sweep activations, do it last, after the architectural knobs from section 11 (`hidden`, `layers`, `emb_dim`, `net_arch.pi`, `net_arch.vf`). One legitimate ablation worth running: encoder activation set to `"Tanh"` when you push `emb_dim` > 1 — richer embeddings can amplify ReLU's directional asymmetry and Tanh's symmetric output is mildly better-behaved there. Outside of that case, treat this section as a "leave it alone" knob.
 
 ---
 

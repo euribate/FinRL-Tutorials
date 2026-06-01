@@ -1,9 +1,8 @@
   {
   "data": {
-    "ticker_list": [
-      "IVE", "QQQ", "TLT", "SHY", "LQD", "HYG", "GLD", "EEM", "VNQ", "XLE"
-    ],
-    "download_start_date": "2007-05-01",
+    "ticker_list":
+    ["QQQ", "TLT", "GLD", "DBC", "TIP"],
+    "download_start_date": "2007-08-01",
     "train_start_date":    "2009-01-01",
     "train_end_date":      "2020-07-01",
     "trade_start_date":    "2020-07-01",
@@ -41,7 +40,7 @@
     "diff_ratio_eta": 0.00396825,
     "article_reward": {
       "return_scale":  1000.0,
-      "lambda_to":     0.0005,
+      "lambda_to":     0.0,
       "lambda_conc":   0.0,
       "_notes": "Coefficients for the article reward modes (Kashif & Slepaczuk 2026), used only when reward_mode is 'article_absolute' or 'article_benchmark'. Formula: r = return_scale * log(1+r_net) [minus log(1+r_bench) for the benchmark variant] - lambda_to * turnover * 100 - lambda_conc * (HHI - 1/N) * 100, where r_net is the return already net of the drift-adjusted transaction cost (env.transaction_cost_penalty), turnover is the drift-adjusted L1 turnover, HHI = sum(w_i^2) is the Herfindahl concentration of the target weights, and N is the number of weights (incl. cash if enabled). NOTE: turnover is charged TWICE on purpose, exactly as in the paper - once as the real cost inside r_net, once as the lambda_to shaping penalty. Paper defaults: return_scale=1000, lambda_to=0.003, lambda_conc in {0.0, 0.1, 0.5} (0.1 chosen here). The benchmark variant uses the benchmark defined in the 'benchmark' block.",
       "_lambda_conc_note": "0.0 disables the concentration penalty (agent free to concentrate); 0.1 mild diversification pressure; 0.5 strong push toward equal weight (HHI_min = 1/N)."
@@ -66,15 +65,15 @@
       "use": true,
       "total_timesteps": 150000,
       "model_kwargs": {
-        "n_steps": 1024,
-        "ent_coef": 0.01,
+        "n_steps": 2048,
+        "ent_coef": 0.05,
         "learning_rate": 0.0002,
         "batch_size": 128,
         "gamma": 0.999,
         "clip_range": 0.3,
         "n_epochs": 10,
         "clip_range_vf": null,
-        "gae_lambda": 0.95,
+        "gae_lambda": 0.9,
         "vf_coef": 0.5,
         "max_grad_norm": 0.5,
         "target_kl":     null,
@@ -83,7 +82,7 @@
       },
       "policy_kwargs": {
         "features_extractor": "per_asset",
-        "features_extractor_kwargs": { "hidden": 32, "emb_dim": 1, "cross_sectional": true, "layers": 2 },
+        "features_extractor_kwargs": { "hidden": 128, "emb_dim": 1, "cross_sectional": true, "layers": 2 },
         "net_arch": { "pi": [], "vf": [64, 64] }
       },
       "_policy_kwargs_notes": "CURRENTLY ACTIVE: per-asset shared encoder (README A.22) - one shared MLP scores each asset from its OWN feature column, so the policy can differentiate instead of collapsing to equal weight. TO SWITCH BACK to the default flatten-then-MLP baseline, set the whole policy_kwargs value to null (i.e. \"policy_kwargs\": null). Only the key named 'policy_kwargs' is read by the code; keys starting with '_' are ignored. features_extractor: 'per_asset'|'mlp'|null; features_extractor_kwargs tunes the shared MLP (hidden width, emb_dim=scores-per-asset, cross_sectional centering, layers); net_arch pi=[] keeps the policy head minimal while vf gives the value head capacity."
@@ -141,7 +140,9 @@
   "benchmark": {
     "type":   "equal_weight",
     "ticker": "^DJI",
-    "_notes": "Defines the benchmark used by THREE things: (1) the 'article_benchmark' reward mode, (2) the per-asset beta_60 feature, (3) the global mkt_ret_5/mkt_ret_20 features. type='equal_weight' (DEFAULT) builds a daily-rebalanced equal-weight portfolio of the universe tickers and uses its daily return as the benchmark - contemporaneous, no look-ahead. type='ticker' downloads 'ticker' (e.g. ^DJI, ^GSPC, SPY) and uses its daily return instead. Stage 1 writes the resulting series to a 'benchmark_return' column (broadcast per date) consumed downstream. This is separate from baselines.dji_ticker, which only controls the DJIA overlay drawn in the stage-3 equity plot."
+    "show_cash_inclusive": true,
+    "_notes": "Defines the benchmark used by THREE things: (1) the 'article_benchmark' reward mode, (2) the per-asset beta_60 feature, (3) the global mkt_ret_5/mkt_ret_20 features. type='equal_weight' (DEFAULT) builds a daily-rebalanced equal-weight portfolio of the universe tickers and uses its daily return as the benchmark - contemporaneous, no look-ahead. type='ticker' downloads 'ticker' (e.g. ^DJI, ^GSPC, SPY) and uses its daily return instead. Stage 1 writes the resulting series to a 'benchmark_return' column (broadcast per date) consumed downstream. This is separate from baselines.dji_ticker, which only controls the DJIA overlay drawn in the stage-3 equity plot.",
+    "_show_cash_inclusive_notes": "When true (DEFAULT) AND cash.enabled=true AND type='equal_weight', a cash-inclusive EqualWeight is ADDED alongside the standard one: stage 3 reports it as the 'EqualWeight_w_Cash' row; stage 4 overlays it on the equity plot as a dotted line labeled '<label> w/ Cash'. It allocates 1/(M+1) to each of the M risky tickers AND to CASH (which earns risk_free_rate), so its return is exactly M/(M+1) of the standard EqualWeight return. Use it for a fair allocation-skill comparison: the agent voluntarily parks weight in CASH, so beating EqualWeight_w_Cash isolates allocation skill from the structural cash drag, while EqualWeight (fully invested) remains the standard 'beat the market' bar. Set false to suppress both the row and the overlay."
   },
 
   "paths": {
@@ -184,7 +185,7 @@
   },
 
   "risk_off": {
-    "enabled":              true,
+    "enabled":              false,
     "turbulence_threshold": 80.0,
     "_notes": "Improvement #7: non-learned safety valve. When data.use_turbulence=true, stage 1 attaches a FinRL-computed turbulence index to every row. In LogReturnPortfolioEnv.step(), if turbulence on the current bar > turbulence_threshold, the agent's softmaxed weights are overridden to go to cash BEFORE the TC penalty and reward shaping run. When cash.enabled=true the override puts 100% in the CASH asset; otherwise it zeroes the stock weights. The portfolio earns ~0% on that day, and the TC penalty charges turnover to liquidate / re-enter. Same threshold applied during training and inference. Set enabled=false to disable. With an explicit cash asset (cash block below) you may prefer to disable this gate and let the agent learn when to hold cash itself."
   },

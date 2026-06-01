@@ -164,6 +164,46 @@ def main() -> None:
             print(f"qs.reports.metrics returned {type(metrics).__name__}; "
                   f"skipped {metrics_path}.")
 
+    # Cash-inclusive variant report: mirrors stage-3's EqualWeight_w_Cash row
+    # and stage-4's dotted overlay. QuantStats is single-benchmark, so we
+    # generate a SECOND html (and metrics CSV) using the cash-inclusive
+    # EqualWeight as the benchmark. Math: with cash earning 0, a 1/(M+1)
+    # daily-rebalanced portfolio's return is exactly M/(M+1) * r_eq_no_cash,
+    # so we scale the existing series. Only applies when the benchmark is
+    # the equal-weight series from stage 1 (use_source=true, type=equal_weight)
+    # with cash.enabled=true; controlled by benchmark.show_cash_inclusive.
+    bench_cfg_main = main_cfg.get("benchmark", {}) or {}
+    cash_cfg_main  = main_cfg.get("cash", {}) or {}
+    if (bench_cfg_main.get("show_cash_inclusive", True)
+            and cash_cfg_main.get("enabled", False)
+            and bench_cfg_main.get("type", "equal_weight") == "equal_weight"
+            and qs_cfg.get("benchmark", {}).get("use_source", True)):
+        M = len(main_cfg.get("data", {}).get("ticker_list", []) or [])
+        if M > 0:
+            bench_wc     = (M / (M + 1)) * benchmark
+            label_wc     = f"{bench_label} w/ Cash"
+            html_wc_path = html_path.with_name(f"{html_path.stem}_w_cash{html_path.suffix}")
+            title_wc     = f"{title} (vs {label_wc})"
+            print(f"\nGenerating cash-inclusive variant report (benchmark = {label_wc})...")
+            qs.reports.html(
+                returns,
+                benchmark=bench_wc,
+                output=str(html_wc_path),
+                title=title_wc,
+                rf=rf,
+            )
+            print(f"Saved {html_wc_path}")
+            if metrics_csv:
+                stem  = Path(metrics_csv).stem
+                suf   = Path(metrics_csv).suffix
+                metrics_wc_path = out_dir / f"{stem}_w_cash{suf}"
+                metrics_wc = qs.reports.metrics(
+                    returns, benchmark=bench_wc, mode="full", rf=rf, display=False,
+                )
+                if isinstance(metrics_wc, pd.DataFrame):
+                    metrics_wc.to_csv(metrics_wc_path)
+                    print(f"Saved {metrics_wc_path}")
+
 
 if __name__ == "__main__":
     main()

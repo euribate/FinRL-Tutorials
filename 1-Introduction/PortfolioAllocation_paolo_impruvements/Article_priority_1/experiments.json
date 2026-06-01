@@ -1,0 +1,44 @@
+{
+  "_description": "Experiment definitions for run_experiments.py. Each experiment is a set of dotted-path overrides applied on top of base_config. Stage 2 (train) + stage 3 (env backtest) always run; stage 4 (backtrader) runs only with --with-backtrader. Results are collected into experiments_results.csv and ranked by env_sharpe_minus_eqw.",
+
+  "base_config": "config.json",
+
+  "experiments": [
+    { "name": "baseline",       "overrides": {} },
+    { "name": "mlp_policy",     "overrides": { "models.ppo.policy_kwargs": null } },
+    { "name": "gate_off",       "overrides": { "risk_off.enabled": false } },
+    { "name": "reward_diffsharpe", "overrides": { "env.reward_mode": "diff_sharpe" } },
+    { "name": "bigenc",         "overrides": {
+        "models.ppo.policy_kwargs.features_extractor_kwargs.emb_dim": 4,
+        "models.ppo.policy_kwargs.features_extractor_kwargs.hidden": 64
+    } }
+  ],
+
+  "grid": [
+    {
+      "name_prefix": "g",
+      "axes": {
+        "models.ppo.model_kwargs.gamma":    [0.99, 0.999],
+        "models.ppo.model_kwargs.ent_coef": [0.0, 0.001, 0.01]
+      }
+    },
+    {
+      "name_prefix": "enc",
+      "axes": {
+        "models.ppo.policy_kwargs.features_extractor_kwargs.hidden":  [16, 32, 64, 128],
+        "models.ppo.policy_kwargs.features_extractor_kwargs.emb_dim": [1, 4, 8]
+      }
+    },
+    {
+      "name_prefix": "big",
+      "axes": {
+        "env.reward_mode":                                              ["article_absolute", "diff_sharpe"],
+        "models.ppo.policy_kwargs.features_extractor_kwargs.hidden":    [192, 256],
+        "models.ppo.model_kwargs.gamma":                                [0.99, 0.999],
+        "models.ppo.model_kwargs.ent_coef":                             [0.0, 0.001, 0.01]
+      }
+    }
+  ],
+
+  "_notes": "Override keys are dotted paths into config.json (e.g. 'models.ppo.model_kwargs.gamma'). Set a value to null to null-out a key (e.g. policy_kwargs -> default MLP). The 'grid' block expands the cartesian product of its 'axes' into one experiment per combination, named name_prefix + '_' + leafkey+value per axis. Experiments whose overrides touch data ('data.*', 'benchmark.*', 'cash.*') get their own stage-1 data run; all others reuse the shared data/ produced once. Add/remove experiments freely - already-completed ones (present in experiments_results.csv with status=ok) are skipped unless --force."
+}
