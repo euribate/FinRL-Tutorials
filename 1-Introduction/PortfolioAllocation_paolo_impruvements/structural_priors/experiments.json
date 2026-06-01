@@ -1,0 +1,25 @@
+{
+  "_description": "Experiments for the structural-priors folder. The base config has policy_prior.enabled=true with type='inverse_vol' and alpha=1.0, so the empty-override 'baseline' IS the residual policy. Other experiments isolate (a) the prior's marginal contribution by turning it off, (b) the choice of prior type, and (c) the blending strength alpha.",
+
+  "base_config": "config.json",
+
+  "experiments": [
+    { "name": "baseline",            "overrides": {} },
+    { "name": "prior_off",           "overrides": { "policy_prior.enabled": false, "policy_prior.type": "none" } },
+    { "name": "prior_equal_weight",  "overrides": { "policy_prior.type": "equal_weight" } },
+    { "name": "prior_risk_parity",   "overrides": { "policy_prior.type": "risk_parity" } },
+    { "name": "gate_off",            "overrides": { "risk_off.enabled": false } },
+    { "name": "gate_off_prior_off",  "overrides": { "risk_off.enabled": false, "policy_prior.enabled": false, "policy_prior.type": "none" } }
+  ],
+
+  "grid": [
+    {
+      "name_prefix": "alpha",
+      "axes": {
+        "policy_prior.alpha": [0.25, 0.5, 1.0, 2.0]
+      }
+    }
+  ],
+
+  "_notes": "Override keys are dotted paths into config.json. 'baseline' uses the base config as-is (inverse_vol, alpha=1.0). 'prior_off' is the control for measuring the prior's marginal contribution. 'prior_equal_weight' and 'prior_risk_parity' compare prior types. 'gate_off' / 'gate_off_prior_off' decompose the gate's contribution from the prior's. The alpha grid sweeps blending strength on the default inverse_vol prior; alpha=1.0 overlaps 'baseline' and serves as a determinism check. Already-completed names are skipped unless --force."
+}
