@@ -1,7 +1,7 @@
   {
   "data": {
     "ticker_list":
-    ["IVE", "QQQ", "TLT", "SHY", "LQD", "HYG", "GLD", "EEM", "VNQ", "XLE", "EFA", "DBC", "TIP"],
+    ["IVE", "QQQ", "SHY", "TLT", "LQD", "HYG", "GLD", "EEM", "VNQ", "XLE", "EFA", "DBC", "TIP"],
     "download_start_date": "2007-08-01",
     "train_start_date":    "2009-01-01",
     "train_end_date":      "2020-07-01",
@@ -33,7 +33,7 @@
     "initial_amount": 100000000,
     "transaction_cost_pct": 0.001,
     "reward_scaling": 1.0,
-    "reward_mode": "diff_sharpe",
+    "reward_mode": "log_return",
     "transaction_cost_penalty": 0.001,
     "turnover_mode": "naive",
     "_turnover_mode_notes": "How the env measures turnover (drives BOTH the transaction_cost_penalty deduction and the article reward's lambda_to penalty). 'naive' (DEFAULT, article-faithful) = |w_target - w_previous_target|, i.e. the change in the agent's TARGET weights, exactly as Kashif & Slepaczuk 2026 define it. 'drift_adjusted' = |w_target - w_drift| where w_drift is the previous weights after one bar of per-ticker price drift; this charges the real rebalancing trade and matches a broker's commission base, but deviates from the article. Use 'naive' to keep the training signal aligned with the paper (backtrader / stage 4 remains the realistic execution check); use 'drift_adjusted' if you want the env's analytical cost to mirror the broker. Earlier folders (8) used drift_adjusted; this folder defaults to naive.",
@@ -66,7 +66,7 @@
       "total_timesteps": 150000,
       "model_kwargs": {
         "n_steps": 2048,
-        "ent_coef": 0.05,
+        "ent_coef": 0.01,
         "learning_rate": 0.0002,
         "batch_size": 128,
         "gamma": 0.999,
@@ -200,8 +200,8 @@
 
   "policy_prior": {
     "enabled": true,
-    "type":    "inverse_vol",
-    "alpha":   1.0,
+    "type":    "equal_weight",
+    "alpha":   0.5,
     "cash_share": null,
     "_notes": "Structural-prior policy (residual / 'rules-based base + RL tilt'). When enabled, the env adds alpha * log(w_prior) to the agent's raw action BEFORE softmax_normalization. Math: weights = softmax(actions + alpha * log(w_prior)), so at action == 0 the resulting weights are exactly w_prior, and any non-zero action becomes a tilt in log-space. The policy's effective job collapses from 'discover the entire allocation function' to 'find small corrections to w_prior' - drastically reducing what PPO has to learn from observation. types: 'none' (no prior, identical to Article_priority_1); 'equal_weight' (1/N including cash); 'inverse_vol' (closed-form risk-parity diagonal approx: w_i ∝ 1/sqrt(diag(Sigma)_i) on the risky names, cash held out); 'risk_parity' (iterative full-covariance solver, also risky-only). The trailing 252-day covariance is used; no look-ahead. CASH (when cash.enabled=true) gets cash_share fixed; the risky names share (1 - cash_share) per the chosen rule. cash_share=null means use 1/N (equal share with risky). The gate (risk_off) still overrides everything on high-turbulence bars. alpha: blending strength. alpha=0 disables the prior; alpha=1 (DEFAULT) makes w_prior the action==0 fixed point; alpha>1 amplifies tilts; 0<alpha<1 makes w_prior 'stickier'. Recommended sweep: type in [equal_weight, inverse_vol, risk_parity] x alpha in [0.5, 1.0, 2.0].",
     "_lambda_alpha_note": "alpha=1.0 is the canonical residual-policy formulation. Treat alpha as the equivalent of the 'leverage' that the agent has over the prior: alpha=2 means the agent's tilts are 2x as expressive."

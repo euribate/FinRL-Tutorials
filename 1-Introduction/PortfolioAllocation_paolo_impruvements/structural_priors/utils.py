@@ -413,34 +413,76 @@ def compute_prior_weights_from_cov(cov: np.ndarray,
 
 
 def _solve_risk_parity(cov: np.ndarray, max_iter: int = 200,
-                       tol: float = 1e-7) -> np.ndarray:
-    """Iteratively solve for risk-parity weights on a covariance matrix.
+                       tol: float = 1e-9) -> np.ndarray:
+    """Solve for equal-risk-contribution weights on a covariance matrix.
 
     Returns a vector w of length N summing to 1 such that each asset's risk
-    contribution w_i * (Sigma @ w)_i is approximately equal. Standard fixed-
-    point recipe: rescale each weight by sqrt(target_RC / RC_i), renormalise,
-    repeat until the max weight change falls below `tol`. Falls back to equal
-    weight if the covariance is degenerate (e.g. all-zero rows).
+    contribution w_i * (Sigma @ w)_i is approximately equal.
+
+    Implementation: SLSQP minimisation of the equal-risk-contribution loss
+        L(w) = sum_i (rc_i / rc.sum() - 1/N)^2
+    subject to sum(w) = 1 and w_i in [eps, 1].
+
+    The earlier fixed-point recipe (w *= sqrt(target / rc_frac)) is
+    *unreliable* on real covariance matrices that contain negative entries
+    (e.g. bond-equity off-diagonals): when (Sigma @ w)_i is negative for
+    some asset i, the floor-clamp on rc_frac produces a 7.7e10 update
+    ratio that catastrophically collapses the iteration onto the wrong
+    fixed point - confirmed numerically on the user data. SLSQP avoids
+    the issue by optimising the loss directly under the same constraints.
+    Falls back to equal weight on degenerate covariances or solver
+    failure.
     """
+    from scipy.optimize import minimize
+
     n = cov.shape[0]
     if n == 0:
         return np.zeros(0)
-    w = np.full(n, 1.0 / n)
-    for _ in range(max_iter):
-        sigma_w = cov @ w
-        rc = w * sigma_w
-        rc_sum = float(rc.sum())
-        if not np.isfinite(rc_sum) or rc_sum <= 0.0:
-            return np.full(n, 1.0 / n)
-        rc_frac = rc / rc_sum
-        target = 1.0 / n
-        ratio = target / np.maximum(rc_frac, 1e-12)
-        w_new = np.maximum(w * np.sqrt(ratio), 1e-10)
-        w_new = w_new / w_new.sum()
-        if np.max(np.abs(w_new - w)) < tol:
-            return w_new
-        w = w_new
-    return w
+    target = 1.0 / n
+
+    def loss(w):
+        w = np.asarray(w, dtype=float)
+        sw = cov @ w
+        rc = w * sw
+        rc_sum = max(float(rc.sum()), 1e-12)
+        rc_norm = rc / rc_sum
+        return float(np.sum((rc_norm - target) ** 2))
+
+    cons = [{"type": "eq", "fun": lambda w: float(w.sum() - 1.0)}]
+    bnds = [(1e-6, 1.0)] * n
+
+    # Multi-start: try uniform AND inverse-vol as starts; pick the best.
+    # SLSQP from uniform alone can converge to a corner on extreme-asymmetry
+    # covariances; inverse-vol is a much better warm-start for true RP.
+    diag = np.diag(cov).astype(float)
+    iv_start = 1.0 / np.sqrt(np.maximum(diag, 1e-12))
+    iv_start = iv_start / iv_start.sum()
+    starts   = [np.full(n, 1.0 / n), iv_start]
+
+    best_w, best_loss = None, np.inf
+    for w0 in starts:
+        try:
+            out = minimize(loss, w0, bounds=bnds, constraints=cons,
+                           method="SLSQP",
+                           options={"maxiter": max_iter, "ftol": tol})
+            w_out = np.asarray(out.x, dtype=float)
+            s = float(w_out.sum())
+            if (not out.success) or (s <= 0.0) or (not np.all(np.isfinite(w_out))):
+                continue
+            w_norm = w_out / s
+            l = loss(w_norm)
+            if l < best_loss:
+                best_w, best_loss = w_norm, l
+        except Exception:
+            continue
+
+    # Accept the solution only if it actually achieves near-equal risk
+    # contributions. Otherwise (ill-conditioned cov, solver stuck at a
+    # corner) fall back to inverse-vol, which is the diagonal-case exact
+    # answer and a known-good approximation for moderate correlations.
+    if best_w is not None and best_loss < 1e-3:
+        return best_w
+    return iv_start
 
 
 class LogReturnPortfolioEnv(StockPortfolioEnv):
@@ -565,6 +607,13 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         self.policy_prior_alpha      = float(policy_prior_alpha)
         self.policy_prior_cash_share = (None if policy_prior_cash_share is None
                                         else float(policy_prior_cash_share))
+        # Per-day cache. The trailing 252-day covariance is a deterministic
+        # function of self.day, so the prior weights for a given day are
+        # identical across episodes - cache them to avoid re-running the
+        # SLSQP solver on every training step. Keyed by int(self.day).
+        # The cache is per-env-instance and per-policy_prior_type; safe as
+        # long as those don't mutate after __init__ (they don't).
+        self._prior_cache: dict = {}
 
     def _compute_prior_weights(self) -> np.ndarray:
         """Structural-prior weight vector for the current bar.
@@ -574,14 +623,27 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         time) share exactly the same formula. Uses self.covs (the trailing
         252-day covariance, computed by the parent before its day += 1
         advance), so there is no look-ahead.
+
+        Cached by int(self.day). The rolling covariance is a deterministic
+        function of the day index, so the prior is too - critical for
+        training performance when the underlying solver (e.g. SLSQP for
+        risk_parity) costs O(10ms) per call. PPO runs the same days
+        through many episodes; cache hit rate approaches 100% after the
+        first epoch.
         """
+        key = int(self.day)
+        cached = self._prior_cache.get(key)
+        if cached is not None:
+            return cached
         cash_idx = self.cash_idx if (self.cash_enabled and self.cash_idx >= 0) else -1
-        return compute_prior_weights_from_cov(
+        w = compute_prior_weights_from_cov(
             cov=np.asarray(self.covs, dtype=float),
             prior_type=self.policy_prior_type,
             cash_idx=cash_idx,
             cash_share=self.policy_prior_cash_share,
         )
+        self._prior_cache[key] = w
+        return w
 
     def _apply_policy_prior(self, actions):
         """Inject the prior into the agent's pre-softmax action.

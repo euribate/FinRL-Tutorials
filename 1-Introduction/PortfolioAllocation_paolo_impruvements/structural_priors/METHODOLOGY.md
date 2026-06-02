@@ -233,19 +233,47 @@ Stages 1 and 2 are sanity / smoke tests; stages 3 - 5 are the actual
 research questions. Run them in order; do not proceed to a later stage
 until earlier ones pass.
 
-### 5.1 Stage 1 — code-correctness sanity
+### 5.1 Stage 1 — code-correctness sanity (`test_priors.py`)
 
-A quick numerical check that the helpers do what they should. Run a Python
-session and verify:
+A quick numerical check that the helpers do what they should. Run this
+**before** burning training time — it catches every bug in the prior /
+softmax math layer without needing a trained model, in under a second.
 
-- `_solve_risk_parity` on a hand-picked 3-asset covariance returns weights
-  summing to 1 with approximately-equal risk contributions
-  (`w_i * (Sigma @ w)_i / total ≈ 1/3`).
-- `_compute_prior_weights` on the trained env's first observation returns
-  a length-`stock_dim` vector summing to 1 with cash at the configured
-  `cash_share` and risky weights aligned with the chosen `type`.
-- `softmax(0 + log(w_prior))` numerically equals `w_prior` (the action-=-0
-  identity).
+```bash
+# from the structural_priors/ folder, in the same shell you train in:
+python test_priors.py
+```
+
+The script runs three tests in order, prints inputs / outputs / a
+`PASS`-`FAIL` line for each, prints a summary line, and exits with code
+`0` on all-pass / `1` on any failure (suitable for use as a CI gate):
+
+1. **`_solve_risk_parity` on a hand-picked 3-asset covariance** — verifies
+   the iterative solver converges to weights whose risk contributions
+   `w_i * (Sigma @ w)_i / total` are each approximately `1/3`. Tests the
+   only piece of code that does anything non-trivial.
+
+2. **`compute_prior_weights_from_cov` returns a valid weight vector** —
+   verifies the helper produces a length-`stock_dim` vector summing to
+   1, with cash at the configured `cash_share` and risky weights aligned
+   with the configured `type` (against a hand-built 4-asset toy: 3 risky
+   + 1 synthetic zero-variance cash). **Reads your `config.json`**, so
+   the test adapts to whatever `policy_prior.type` / `cash_share` is
+   currently configured. `LogReturnPortfolioEnv._compute_prior_weights`
+   is a two-line wrapper around this helper — testing the helper tests
+   the env's training-time prior too.
+
+3. **`softmax(0 + 1.0 * log(w_prior)) == w_prior` exactly** — verifies
+   the algebraic identity that justifies the residual-policy
+   formulation: at `action = 0` the agent's allocation IS the prior. For
+   context the script also prints what `alpha = 0.0, 0.5, 2.0` produce
+   so you can see the role of the blending knob visually.
+
+If any test fails, **do not proceed to stage 2** (smoke training) — the
+prior math is broken somewhere and the resulting model will be
+miscalibrated. Investigate by editing the inputs in `test_priors.py`
+(they are 5 lines of hand-built covariances) until the failure isolates
+to a specific helper.
 
 ### 5.2 Stage 2 — initial-policy smoke test
 
@@ -349,15 +377,45 @@ not change `policy_prior.type` or `policy_prior.alpha` between training
 and inference** — the policy's actions will be miscalibrated and the
 resulting allocations meaningless.
 
-### 6.2 The right benchmark in stage 3 is not (yet) present
+### 6.2 The static-prior benchmark across stages 3, 4, and 5
 
-Stage 3 currently reports `MinVariance`, `EqualWeight`, and
-`EqualWeight_w_Cash`. The most informative benchmark for a residual
-policy — **a static, daily-rebalanced portfolio of `w_prior` itself with
-no learning** — is not computed. Without it, you cannot directly attribute
-the system's Sharpe lift to "the prior alone" vs "the agent's learned tilts
-on top of the prior." This is a known gap; adding it is a few lines in
-`03_backtest.py` and is a recommended follow-up.
+Stage 3 reports `MinVariance`, `EqualWeight`, `EqualWeight_w_Cash`, AND
+`Prior_{type}` — a daily-rebalanced *static* portfolio of `w_prior`
+computed via the same `compute_prior_weights_from_cov` helper the env
+uses at training time (single source of truth for the prior formula).
+This is the right comparator for a residual-policy PPO: lift over
+`Prior_{type}` is the agent's learned tilt; lift over `EqualWeight` that
+`Prior_{type}` *also* shows is the prior alone.
+
+The static-prior baseline propagates downstream automatically:
+
+- **Stage 3** (`03_backtest.py`): adds a `Prior_{type}` row in the
+  printed summary table and a `Prior_{type}` column in
+  `results/equity_curves.csv`. The curve also appears in
+  `results/equity_plot.png`.
+- **Stage 4** (`04_backtrader_replay.py`): overlays the static prior on
+  the backtrader equity plot as a dash-dot line labelled
+  `Prior ({type}, static)`, alongside the existing dashed `EqualWeight`
+  and dotted `EqualWeight w/ Cash` overlays.
+- **Stage 5** (`05_quantstats_report.py`): emits a third HTML report
+  `report_vs_prior.html` (+ `metrics_vs_prior.csv`) using the static
+  prior as the QuantStats benchmark.
+
+The three QuantStats reports together answer three distinct questions:
+
+| Report | Benchmark | Question |
+|---|---|---|
+| `report.html` | `EqualWeight` | "Did the deployable system beat the dumb passive comparator?" |
+| `report_w_cash.html` | `EqualWeight_w_Cash` | "After correcting for the cash drag, any allocation skill?" |
+| `report_vs_prior.html` | `Prior_{type}` | "Did the agent's *learned tilts* add value over the prior alone?" |
+
+The propagation is gated by `benchmark.show_prior_baseline` (default
+`true`) AND by `policy_prior` being active (`enabled = true` AND
+`type != "none"`). Setting `show_prior_baseline = false` suppresses just
+the stage-5 report; the stage-3 column and stage-4 overlay still appear
+as long as `policy_prior` is active. Setting `policy_prior.enabled =
+false` (the `prior_off` control experiment) auto-suppresses the prior
+baseline everywhere — there is no prior to benchmark against.
 
 ### 6.3 Walk-forward and the prior re-estimate
 
@@ -409,3 +467,226 @@ is materially closer to what production systematic allocators actually run.
 If it does not, you have learned that the data limit is below what any
 prior can overcome on this problem — which is itself a clean research
 result.
+
+---
+
+## Appendix A — Env-time rebalance cadence (planned, not yet implemented)
+
+**Status**: documented design, no implementation. As of the current
+commit the pipeline rebalances *daily* everywhere (env step, stage-3
+backtest, stage-4 backtrader replay, `predict_tomorrow.py`). This
+appendix captures the env-time approach to weekly / monthly rebalancing
+("Approach B" in the design discussion) so the design is fixed before
+implementation begins.
+
+### A.1 Motivation
+
+Practitioner allocators (AQR, Bridgewater, BlackRock systematic)
+rebalance monthly because transaction costs dominate at higher frequency
+and the allocation signal does not change meaningfully day-to-day. They
+achieve this by decoupling the **signal** frequency (daily, used for
+estimation) from the **decision** frequency (monthly, used for action).
+The current pipeline conflates the two: every daily bar is an
+opportunity for a fresh allocation decision, which generates churn the
+backtrader replay then has to penalise via execution costs.
+
+The env-time cadence implements the decoupling: the policy network still
+*sees* daily observations and learns from daily transitions, but the
+*allocation decision* it produces is only acted upon at the configured
+cadence (e.g. Friday close, or first trading day of month). Between
+rebalance bars the weights drift naturally with price changes.
+
+The cheaper alternative (the "Approach A" inference-only cadence) is
+discussed in section A.5 and is recommended as a *diagnostic* but not as
+the production solution.
+
+### A.2 Mechanism
+
+Inside `LogReturnPortfolioEnv.step()`, **before** the existing
+structural-prior injection and **before** the parent class's softmax, a
+new gate fires:
+
+> "If the current bar is NOT a rebalance day, replace the agent's action
+> with the action stored at the most recent rebalance bar."
+
+The agent's network still emits a fresh action every bar — but the env
+silently discards non-rebalance-day actions and reuses
+`self._last_rebalance_action`. The structural prior then applies to that
+(possibly stale) action, the softmax produces weights, the parent class
+advances the day, the turbulence cash gate runs as today, and reward is
+computed against the next bar's returns.
+
+On rebalance days the agent's new action is captured into
+`self._last_rebalance_action` for replay on subsequent non-rebalance
+bars.
+
+### A.3 Configuration (proposed)
+
+A new top-level block in `config.json`:
+
+```
+"rebalance": {
+  "cadence":     "weekly",       // "daily" | "weekly" | "monthly"
+  "weekly_day":  "FRI",          // ISO weekday code; used when cadence = "weekly"
+  "monthly_day": 1,              // calendar day of month (1-28); used when cadence = "monthly"
+  "_notes":      "..."
+}
+```
+
+Default for backward compatibility: `cadence: "daily"`, so the mechanism
+is opt-in and the current pipeline keeps behaving identically. The
+holiday-adjacent fallback rule: if the configured day is not a trading
+day, the **next available trading day** in the calendar is used (so a
+weekly Friday rebalance shifts to Monday if Friday is a market holiday).
+
+### A.4 Impact on training
+
+Three structural effects on PPO.
+
+**A.4.1 Sparser policy-gradient signal.** PPO records
+`(state, action, reward)` on every step. With weekly rebalancing only
+~1 in 5 steps produces a fresh action; the remaining 4 steps record the
+same action with new state and the next-day return. From the agent's
+perspective, the non-rebalance bars are essentially zero-gradient: its
+current output never moved the weights, so its contribution to the
+reward at those bars is constant (zero derivative w.r.t. its parameters).
+Effective number of *informative* samples per training year drops from
+~252 to ~52 (weekly) or ~12 (monthly).
+
+Practical consequence: for a fixed `total_timesteps = 150000`, the
+policy receives roughly `1/5` (weekly) or `1/21` (monthly) the actual
+policy-gradient updates. To compensate, `total_timesteps` should be
+scaled up roughly proportionally — `750000` for weekly, `~3M` for
+monthly. Walk-forward window length should also be reconsidered, because
+each window now contains far fewer decision points.
+
+**A.4.2 Reward magnitude and variance per decision event.** On any
+single bar the booked return is still a single-bar return regardless of
+cadence, but the *effective* return between two rebalance decisions is
+the compounded N-bar return. `diff_sharpe`'s running A (mean) and B
+(mean of `R^2`) moments accumulate from daily returns regardless of
+cadence — but those moments now characterise the *churned* daily return
+series rather than the agent's *decision-frequency* return series.
+
+This is acceptable as a first implementation but introduces a mismatch
+between training reward and the metric you really care about (the
+weekly Sharpe of the deployed system). A stricter implementation would
+compute reward **only on rebalance bars** and use the compounded
+multi-bar return as the single per-event reward — much higher
+per-event magnitude and variance. In that case `diff_ratio_eta` would
+need to scale roughly with the cadence: `~1/52` for weekly,
+`~1/12` for monthly, so the running half-life stays at one calendar
+year.
+
+**A.4.3 Implicit robustness pressure.** The agent learns under a hard
+constraint: any weight choice will be held for N bars regardless of how
+the state evolves intra-period. It cannot rely on next-day correction;
+a high-conviction tilt on a noisy short-term feature carries cost for
+the full holding window. This is a useful form of implicit
+regularisation — the policy is pushed toward persistent,
+regime-stable allocations rather than short-horizon noise tilts. The
+expected behavioural effect: lower turnover (already low under the
+prior; should fall further), smoother weight trajectories, and likely
+better generalisation to live trading where noise-tilting is a
+well-known overfitting failure mode.
+
+### A.5 Why env-time, not backtrader-only
+
+The cheaper alternative — apply the cadence only in stage 4 at
+inference, leaving training unchanged — creates a **training-inference
+distribution mismatch**. The agent was trained assuming its action
+would be applied every day; at deployment its action is applied weekly.
+The policy gradient never saw the holding constraint; its choices are
+calibrated for fresh-action-every-day reward dynamics, not for
+"survive-being-held" dynamics.
+
+In practice this mismatch manifests as a divergence between the
+"claimed" Sharpe (env metric from stage 3, daily-rebalance) and the
+deployed Sharpe (stage 4 with weekly cadence). Useful as a *diagnostic*
+to detect whether cadence matters; not the canonical production
+solution. The env-time approach is the principled answer because it
+puts the constraint inside the gradient flow.
+
+### A.6 Interactions
+
+**A.6.1 Structural prior.** The prior is computed and applied before
+the parent class's softmax regardless of cadence. The agent's effective
+action is whatever was stored at the last rebalance bar; the env still
+adds `alpha * log(w_prior)` to that stored action every step before
+softmax, so weights drift slightly with the prior even between
+rebalance days as the covariance changes.
+
+Whether this is desirable is a design choice. The alternative is to
+also freeze the prior between rebalance bars (use the prior from the
+last rebalance day), in which case weights remain exactly constant
+until drift adjustments from price moves. The recommended default is
+the first behaviour: the prior is a *soft anchor*, and on non-rebalance
+bars the anchor stays active even if the action does not change.
+
+**A.6.2 Risk-off cash gate.** Two sensible policies:
+
+- **Gate wins (recommended).** Turbulence above threshold flips weights
+  to 100 % cash on any bar regardless of cadence. After a gate-cash
+  bar, the next rebalance day's action determines the next allocation.
+  This preserves the gate's hard-safety semantics, which the prior
+  sweep has confirmed as the single largest source of edge over
+  EqualWeight.
+- **Cadence wins.** The gate only evaluates on rebalance bars. Cleaner
+  in principle but materially weakens the gate's protective value
+  during the four trading days between rebalances. Not recommended for
+  deployment; worth a single ablation run to measure the cost of the
+  cleaner semantics.
+
+**A.6.3 Per-ticker no-trade band (backtrader).** The band is applied as
+today on rebalance days only (since no rebalance order is sent on
+non-rebalance days, the band has nothing to evaluate). On a rebalance
+day the band may still skip individual tickers whose proposed weight
+change falls below the threshold, even when the cadence has authorised
+a rebalance. The band and the cadence are orthogonal mechanisms.
+
+### A.7 Testing protocol (mirrors section 5)
+
+1. **Code-correctness sanity.** Verify the `is_rebalance_day(date,
+   cadence)` helper returns the expected boolean for known fixtures
+   (a Friday is a weekly rebalance day; January 1st is a monthly
+   rebalance day; a holiday-adjacent day falls back to the next trading
+   day). Verify the env stores and replays
+   `self._last_rebalance_action` correctly across multiple bars.
+2. **Smoke training.** Train 5k timesteps under each cadence and
+   confirm that on non-rebalance days the env's `actions_memory[-1]`
+   matches `actions_memory[-2]` (the action was held), while on
+   rebalance days it differs (the action was refreshed).
+3. **Marginal contribution** (the headline experiment). Train two
+   models to convergence at the same *effective* sample count: one
+   daily, one weekly, each with appropriately scaled `total_timesteps`.
+   Compare env Sharpe, bt Sharpe, turnover, and `n_trades`. Expected:
+   weekly should have ~5× lower turnover and modestly different
+   Sharpe; the direction is the empirical question.
+4. **Cadence comparison.** Extend to monthly. Plot all three on the
+   same equity chart.
+5. **Gate × cadence ablation.** For the best cadence, run gate-wins
+   vs cadence-wins. The expected effect is small if turbulence is rare
+   during the test window and large if it overlaps with crisis periods.
+
+### A.8 Why this is documented but not implemented
+
+The implementation cost is non-trivial: env modification (one new gate
++ one new instance variable), config block (~10 lines), date-handling
+utilities (trading-calendar interaction), retraining at scaled
+`total_timesteps` (5-21× longer per run), and a new sweep grid (cadence
++ ablations). The decision to invest in it should be informed by the
+cheaper inference-only diagnostic (Approach A, also not implemented),
+which is roughly an afternoon of engineering.
+
+The honest recommended sequence is:
+
+1. Implement and run Approach A first (backtrader-only cadence). Cheap
+   diagnostic: does cadence matter for net-of-cost results on this
+   universe?
+2. If yes (deployed Sharpe materially improves under weekly / monthly),
+   invest in Approach B per this appendix.
+3. If no, do not invest in B. The cadence is not the binding
+   constraint and the daily-rebalance behaviour is acceptable.
+
+Approach B becomes the canonical implementation only if the diagnostic
+in step 1 confirms it is worth the engineering and retraining cost.

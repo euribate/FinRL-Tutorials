@@ -95,6 +95,24 @@ residual lives entirely inside the env.
 
 ## How to run
 
+### Step 0 — sanity-check the prior math (sub-second, no model needed)
+
+Before burning training time, run the three-test harness that verifies
+the prior helpers are working correctly. See `METHODOLOGY.md` section
+5.1 for what each test does.
+
+```bash
+python test_priors.py
+```
+
+Exits with code `0` on all-pass, `1` on any failure (suitable as a CI
+gate). If a test fails, **do not proceed** — the prior math is broken
+and any model you train will be miscalibrated. The script reads your
+`config.json`, so it auto-adapts to whatever `policy_prior.type` /
+`cash_share` you have configured.
+
+### Stages 1 - 5 — the standard pipeline
+
 The data layer is unchanged from `Article_priority_1`, so:
 
 ```bash
@@ -104,14 +122,15 @@ python 01_get_data.py
 # 2. Train the residual-policy PPO (baseline = inverse_vol, alpha=1.0).
 python 02_train.py
 
-# 3. Env backtest with the three baselines (MinVariance, EqualWeight,
-#    EqualWeight_w_Cash) + this folder's residual PPO.
+# 3. Env backtest with FOUR baselines: MinVariance, EqualWeight,
+#    EqualWeight_w_Cash, AND the static Prior_{type} portfolio.
 python 03_backtest.py
 
-# 4. Realistic-execution check.
+# 4. Realistic-execution check with the static prior overlay.
 python 04_backtrader_replay.py
 
-# 5. HTML report.
+# 5. HTML report - emits three variants: vs EqualWeight, vs
+#    EqualWeight_w_Cash, and vs Prior_{type}.
 python 05_quantstats_report.py
 ```
 
