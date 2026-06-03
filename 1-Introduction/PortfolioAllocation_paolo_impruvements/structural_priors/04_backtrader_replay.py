@@ -106,6 +106,12 @@ class WeightReplayStrategy(bt.Strategy):
         ("min_weight_delta", 1e-4),
         ("verbosity", "info"),
         ("log_every_trade", False),
+        # Approach A: inference-only rebalance cadence. cadence='daily' is the
+        # default and preserves the previous behaviour; 'weekly' / 'monthly'
+        # only act on configured days, holding weights in between.
+        ("cadence", "daily"),
+        ("weekly_day_iso", 5),  # 5 = Friday (ISO weekday: MON=1 ... SUN=7)
+        ("monthly_day", 1),     # day of month for monthly cadence (1..28)
     )
 
     def __init__(self):
@@ -118,20 +124,75 @@ class WeightReplayStrategy(bt.Strategy):
                 f"Tickers missing from weights CSV: {sorted(missing)}. "
                 f"Make sure stage 3 was run with the same universe."
             )
+        # Cadence-tracking state.
+        self._cadence = str(self.p.cadence).lower()
+        if self._cadence not in ("daily", "weekly", "monthly"):
+            raise ValueError(
+                f"Unknown rebalance.cadence={self._cadence!r}; "
+                f"expected 'daily', 'weekly' or 'monthly'."
+            )
+        self._last_rebalance_date: pd.Timestamp | None = None
+        self._n_rebalances = 0
+        self._n_bars_total = 0
         if self.p.verbosity != "silent":
+            cad_desc = (self._cadence if self._cadence == "daily"
+                        else f"{self._cadence} (weekly_day_iso={self.p.weekly_day_iso}, "
+                             f"monthly_day={self.p.monthly_day})")
             print(f"WeightReplayStrategy: {len(self.tickers)} tickers, "
                   f"cash_buffer={self.p.cash_buffer}, "
                   f"sell_first={self.p.sell_first}, "
-                  f"weight rows={len(self.p.weights_df)}")
+                  f"weight rows={len(self.p.weights_df)}, "
+                  f"cadence={cad_desc}")
+
+    def _is_rebalance_day(self, current_date: pd.Timestamp) -> bool:
+        """Decide whether `current_date` is a rebalance day per the cadence.
+
+        - 'daily': always True (existing behaviour).
+        - 'weekly': True on the configured ISO weekday, OR if 7+ days have
+          passed since the last rebalance (catches holiday-rolled weeks
+          where the configured weekday was not a trading day).
+        - 'monthly': True only when the calendar month differs from the
+          last rebalance AND today.day >= monthly_day (so monthly_day=15
+          means 'first trading day on or after the 15th of each month';
+          monthly_day=1 effectively means 'first trading day of each month').
+        - On the first bar that has recorded weights, always True so the
+          replay opens a position.
+        """
+        if self._cadence == "daily":
+            return True
+        if self._last_rebalance_date is None:
+            return True
+        if self._cadence == "weekly":
+            if current_date.isoweekday() == int(self.p.weekly_day_iso):
+                return True
+            return (current_date - self._last_rebalance_date).days >= 7
+        if self._cadence == "monthly":
+            same_month = (
+                current_date.year == self._last_rebalance_date.year
+                and current_date.month == self._last_rebalance_date.month
+            )
+            if same_month:
+                return False
+            return current_date.day >= int(self.p.monthly_day)
+        return False  # unreachable
 
     def next(self):
         current_date = pd.Timestamp(self.datetime.date(0))
         # Record equity at the start of the bar (post-fills from previous bar
         # with coc=True - so this is end-of-previous-day equity).
         self.equity_curve.append((current_date.date(), self.broker.getvalue()))
+        self._n_bars_total += 1
 
         if current_date not in self.p.weights_df.index:
             return  # no recorded weights for this date
+
+        # Cadence gate (Approach A): on non-rebalance days, hold the existing
+        # position - the broker drifts naturally with prices. The agent's
+        # daily-recorded target weights are simply not acted upon.
+        if not self._is_rebalance_day(current_date):
+            return
+        self._last_rebalance_date = current_date
+        self._n_rebalances += 1
 
         raw = self.p.weights_df.loc[current_date]
         invested = 1.0 - float(self.p.cash_buffer)
@@ -442,6 +503,16 @@ def print_summary(strat: WeightReplayStrategy, initial: float, final: float) -> 
         won = ta.get("won", {}).get("total", 0)
         lost = ta.get("lost", {}).get("total", 0)
         print(f"Trades total/won/lost: {total} / {won} / {lost}")
+    # Approach A cadence summary: tells you exactly how many bars the
+    # strategy actually attempted a rebalance on, vs. how many bars
+    # received daily target weights from the agent.
+    cadence  = getattr(strat, "_cadence", "daily")
+    n_rebal  = getattr(strat, "_n_rebalances", None)
+    n_bars   = getattr(strat, "_n_bars_total", None)
+    if n_rebal is not None and n_bars:
+        pct = 100.0 * n_rebal / max(n_bars, 1)
+        print(f"Rebalance cadence:   {cadence:>14}  "
+              f"({n_rebal} rebalance bars of {n_bars} total = {pct:.1f}%)")
     print("=" * 60)
 
 
@@ -532,6 +603,16 @@ def main() -> None:
         cerebro.adddata(bt.feeds.PandasData(dataname=per_ticker[tic]), name=tic)
     print(f"Added {len(per_ticker)} data feeds.")
 
+    # Approach A: inference-only rebalance cadence (see backtrader_config.json
+    # 'rebalance' block; default 'daily' preserves the existing behaviour).
+    rb_cfg          = bt_cfg.get("rebalance", {}) or {}
+    cadence         = str(rb_cfg.get("cadence", "daily")).lower()
+    weekly_day_name = str(rb_cfg.get("weekly_day", "FRI")).upper()
+    iso_map         = {"MON": 1, "TUE": 2, "WED": 3, "THU": 4,
+                       "FRI": 5, "SAT": 6, "SUN": 7}
+    weekly_day_iso  = int(iso_map.get(weekly_day_name, 5))
+    monthly_day     = max(1, min(28, int(rb_cfg.get("monthly_day", 1))))
+
     cerebro.addstrategy(
         WeightReplayStrategy,
         weights_df=weights_df,
@@ -540,6 +621,9 @@ def main() -> None:
         min_weight_delta=bt_cfg["execution"].get("min_weight_delta", 1e-4),
         verbosity=bt_cfg["logging"]["verbosity"],
         log_every_trade=bt_cfg["logging"]["log_every_trade"],
+        cadence=cadence,
+        weekly_day_iso=weekly_day_iso,
+        monthly_day=monthly_day,
     )
 
     add_analyzers(cerebro, bt_cfg["analyzers"])
