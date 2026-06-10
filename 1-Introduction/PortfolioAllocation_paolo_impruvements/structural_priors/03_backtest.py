@@ -480,6 +480,9 @@ def main() -> None:
     else:
         print("walk_forward=off")
         eval_df = load_pickle(data_dir / "trade_data.pkl")
+        # Per-seed equity curves, captured for the multi-seed dispersion
+        # block printed at end-of-run alongside the ensemble active-stats.
+        per_seed_equity_by_algo: dict[str, dict[int, pd.Series]] = {}
         for algo in enabled_models(config):
             print(f"\nBacktesting {algo.upper()} (ensemble of {len(seeds)} seeds)...")
             # Multi-seed in single-split mode: run each seed against the same
@@ -501,6 +504,19 @@ def main() -> None:
             weights_path = results_dir / f"weights_{algo}.csv"
             ensemble_actions.to_csv(weights_path)
             print(f"Saved {weights_path}")
+            # Capture per-seed equity for the dispersion report. Each seed's
+            # return series is computed via the same daily_return_from_weights
+            # helper so per-seed and ensemble use the same TC accounting.
+            if len(seeds) > 1:
+                per_seed_equity_by_algo[algo.upper()] = {}
+                for s, acts in zip(seeds, per_seed_actions):
+                    per_seed_returns = daily_return_from_weights(
+                        acts, eval_df,
+                        tc_penalty=tc_penalty,
+                        turnover_mode=turnover_mode,
+                    )
+                    per_seed_equity_by_algo[algo.upper()][s] = \
+                        daily_return_to_equity(per_seed_returns, initial)
         baseline_start, baseline_end = trade_period_dates(config, False, None, eval_df)
 
     print("\nComputing Min-Variance baseline...")
@@ -626,6 +642,47 @@ def main() -> None:
               f"t_iid/p_iid assume iid daily active returns; t_NW/p_NW use Newey-West HAC "
               f"with lag = floor(N^(1/4)) to correct for daily serial correlation. "
               f"Two-sided p-values; p < 0.05 ~= |t| > 1.96.")
+
+        # ---- Per-seed dispersion report (single-split, multi-seed only) ----
+        # When > 1 seeds are trained, show the per-seed IR distribution vs
+        # the benchmark so the reader sees the seed-to-seed dispersion that
+        # the ensemble averages out. With ~6 years of evaluation, the
+        # minimum-detectable annualised IR at p<0.05 is roughly 0.8 (since
+        # t = IR * sqrt(years)); realistic alpha edges of 0.2-0.4 are
+        # therefore unreachable on a single path. The dispersion of per-seed
+        # IRs around zero is the headline robustness check: a tight cluster
+        # straddling zero is the expected null outcome.
+        if not walk_forward and 'per_seed_equity_by_algo' in dir() \
+           and per_seed_equity_by_algo and bench_col in result.columns:
+            print(f"\nPer-seed IR distribution vs {bench_col} (single-split, "
+                  f"5.9-year MDE @ p<0.05 ~ IR 0.8)")
+            print("=" * 92)
+            print(f"{'Algo / seed':<18} {'Active_bps':>11} {'TE_bps':>9} "
+                  f"{'IR':>7} {'t_iid':>7} {'p_iid':>7} {'t_NW':>7} {'p_NW':>7} {'N':>5}")
+            print("-" * 92)
+            for algo_up, seed_to_eq in per_seed_equity_by_algo.items():
+                ir_list = []
+                for s, eq in seed_to_eq.items():
+                    a = compute_active_stats(eq, result[bench_col])
+                    if not np.isfinite(a.get("ir", np.nan)):
+                        continue
+                    print(f"  {algo_up:<10}s={s:<5} {a['mean_active_bps']:>10.2f}  "
+                          f"{a['std_active_bps']:>8.2f} "
+                          f"{a['ir']:>7.3f} "
+                          f"{a['t_iid']:>7.2f} {a['p_iid']:>7.3f} "
+                          f"{a['t_nw']:>7.2f} {a['p_nw']:>7.3f} "
+                          f"{a['n_days']:>5d}")
+                    ir_list.append(a["ir"])
+                if len(ir_list) >= 2:
+                    ir_arr = np.asarray(ir_list, dtype=float)
+                    print(f"  {algo_up:<10}MEAN  {' ' * 21}"
+                          f"{ir_arr.mean():>7.3f}  (sd={ir_arr.std(ddof=1):.3f}, "
+                          f"min={ir_arr.min():.3f}, max={ir_arr.max():.3f}, "
+                          f"signs +/- = {int((ir_arr>0).sum())}/{int((ir_arr<0).sum())})")
+            print("=" * 92)
+            print(f"Notes: Cross-seed mean and sd are descriptive only; with N_seeds=5 the "
+                  f"sd is not a power calculation. Use the IR ranges to gauge robustness: "
+                  f"a tight cluster straddling zero confirms the ensemble's null result.")
 
 
 if __name__ == "__main__":
