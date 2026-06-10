@@ -351,6 +351,47 @@ def fetch_yahoo_with_retry(ticker: str, start: str, end: str,
 _REWARD_KINDS = ("log_return", "diff_sharpe", "diff_sortino",
                  "article_absolute", "article_benchmark")
 
+_CADENCE_KINDS = ("daily", "weekly")
+_WEEKLY_DAY_INT = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4}
+
+
+def compute_rebalance_dates(unique_dates,
+                            cadence: str = "daily",
+                            weekly_day: str = "FRI") -> set:
+    """Set of dates on which the env should rebalance (Approach B / env-time).
+
+    For cadence='daily': returns set(unique_dates) — every bar rebalances.
+
+    For cadence='weekly': returns one date per ISO calendar week — the LATEST
+    trading day in that week whose weekday is <= weekly_day's weekday int.
+    Default weekly_day='FRI' picks Friday when present, falls back to the
+    latest of Mon-Thu when Friday is a market holiday. Handles short weeks
+    (e.g. a holiday-only Friday) by selecting whatever Mon-Thu remains.
+
+    `unique_dates` should be an iterable of date-like objects (datetime, date,
+    or string YYYY-MM-DD); returns a set of pd.Timestamp.normalize() values.
+    """
+    if cadence not in _CADENCE_KINDS:
+        raise ValueError(
+            f"Unknown cadence={cadence!r}; expected one of {_CADENCE_KINDS}."
+        )
+    dts = sorted({pd.Timestamp(d).normalize() for d in unique_dates})
+    if cadence == "daily":
+        return set(dts)
+    if weekly_day not in _WEEKLY_DAY_INT:
+        raise ValueError(
+            f"Unknown weekly_day={weekly_day!r}; expected one of "
+            f"{tuple(_WEEKLY_DAY_INT)}."
+        )
+    wd_int = _WEEKLY_DAY_INT[weekly_day]
+    by_iso_week: dict[tuple[int, int], list[pd.Timestamp]] = {}
+    for d in dts:
+        iso = d.isocalendar()
+        key = (int(iso.year), int(iso.week))
+        if d.weekday() <= wd_int:
+            by_iso_week.setdefault(key, []).append(d)
+    return {max(group) for group in by_iso_week.values()}
+
 
 # ---------- structural-prior helpers (used by stage-3 baseline) --------------
 # NOTE: a previous restoration of utils.py removed the env-time residual-policy
@@ -522,6 +563,8 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
                  cash_enabled: bool = False,
                  cash_ticker: str = "CASH",
                  action_logit_scale: float = 1.0,
+                 cadence: str = "daily",
+                 weekly_day: str = "FRI",
                  **kwargs):
         if reward_kind not in _REWARD_KINDS:
             raise ValueError(
@@ -531,6 +574,10 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         if turnover_mode not in ("naive", "drift_adjusted"):
             raise ValueError(f"Unknown turnover_mode={turnover_mode!r}; "
                              f"expected 'naive' or 'drift_adjusted'.")
+        if cadence not in _CADENCE_KINDS:
+            raise ValueError(
+                f"Unknown cadence={cadence!r}; expected one of {_CADENCE_KINDS}."
+            )
         super().__init__(*args, **kwargs)
         # ----- Action geometry fix (research step 1) -----
         # Upstream StockPortfolioEnv declares action_space=Box(low=0, high=1)
@@ -591,12 +638,30 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         self._B = 0.0  # E[R_t^2]
         self._D = 0.0  # E[min(R_t, 0)^2]  (downside second moment)
 
+        # Env-time rebalance cadence (METHODOLOGY Appendix A / Approach B).
+        # cadence='daily' is the legacy behaviour: every bar accepts the
+        # agent's fresh action. cadence='weekly' replaces the agent's action
+        # on non-rebalance bars with self._last_rebalance_action, so the agent
+        # only "decides" once per ISO week (typically on Fridays, or the
+        # latest Mon-Thu trading day in weeks where Friday is a market
+        # holiday). The held action is captured the first time a rebalance
+        # day is encountered, so the gate is well-defined from step 0.
+        self.cadence    = cadence
+        self.weekly_day = weekly_day
+        self._rebalance_dates = compute_rebalance_dates(
+            self.df["date"].unique(), cadence=cadence, weekly_day=weekly_day,
+        )
+        self._last_rebalance_action: np.ndarray | None = None
+
     def reset(self, **kwargs):
         result = super().reset(**kwargs)
         # Reset running EMAs between episodes so they don't leak across resets.
         self._A = 0.0
         self._B = 0.0
         self._D = 0.0
+        # Reset the held action so each episode's first rebalance day captures
+        # a fresh decision, not whatever the last episode ended with.
+        self._last_rebalance_action = None
         return result
 
     def _risk_off_active(self) -> bool:
@@ -615,6 +680,30 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         return val > self.turbulence_threshold
 
     def step(self, actions):
+        # Env-time cadence gate (METHODOLOGY Appendix A / Approach B). When
+        # cadence != 'daily' and today's bar is NOT a rebalance day, replace
+        # the agent's action with the most recent rebalance-day action. The
+        # gate must fire BEFORE super().step(actions) because the parent
+        # softmaxes `actions` immediately. The agent's network still emits a
+        # fresh action every bar — we silently discard it on non-rebalance
+        # bars so the policy gradient at those bars is zero w.r.t. the
+        # current-step action (intended; this is the holding constraint).
+        if self.cadence != "daily":
+            current_date = pd.Timestamp(self.data["date"].values[0]).normalize()
+            if current_date in self._rebalance_dates:
+                # Rebalance day: capture this action for replay on the
+                # non-rebalance days that follow.
+                self._last_rebalance_action = np.asarray(actions, dtype=np.float32).copy()
+            else:
+                # Non-rebalance day: replay the held action. On the very
+                # first non-rebalance bar of an episode (before any rebalance
+                # day has fired) we bootstrap from the agent's action so the
+                # env is well-defined; downstream rebalance days will set
+                # the proper history.
+                if self._last_rebalance_action is None:
+                    self._last_rebalance_action = np.asarray(actions, dtype=np.float32).copy()
+                actions = self._last_rebalance_action
+
         obs, _reward, done, truncated, info = super().step(actions)
         if done or not self.portfolio_return_memory:
             return obs, self.reward, done, truncated, info
@@ -1035,6 +1124,12 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
     # weight at ~35% for 6 assets; s=3 lifts the cap to ~99%. Only honoured by
     # LogReturnPortfolioEnv (shaped reward modes).
     action_logit_scale = float(config["env"].get("action_logit_scale", 1.0))
+    # Env-time rebalance cadence (METHODOLOGY Appendix A). Default 'daily'
+    # reproduces the pre-cadence behaviour byte-for-byte; 'weekly' gates the
+    # agent's action so it only takes effect once per ISO week.
+    rb_cfg     = config.get("rebalance", {}) or {}
+    cadence    = str(rb_cfg.get("cadence", "daily"))
+    weekly_day = str(rb_cfg.get("weekly_day", "FRI"))
 
     # Article reward coefficients (priority-1).
     ar_cfg               = config["env"].get("article_reward", {}) or {}
@@ -1086,6 +1181,13 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
                 f"which keeps its hard-coded Box(0, 1) action space. The scale "
                 f"will be ignored; use a shaped reward mode to activate it."
             )
+        if cadence != "daily":
+            print(
+                f"WARNING: rebalance.cadence={cadence!r} is set but "
+                f"env.reward_mode='value' uses the upstream StockPortfolioEnv, "
+                f"which does not implement the cadence gate. cadence will be "
+                f"ignored; use a shaped reward mode to activate it."
+            )
         if risk_off_enabled:
             print(
                 f"WARNING: risk_off.enabled=true with reward_mode='value' - the "
@@ -1117,6 +1219,8 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
             cash_enabled=cash_enabled,
             cash_ticker=cash_ticker,
             action_logit_scale=action_logit_scale,
+            cadence=cadence,
+            weekly_day=weekly_day,
             **env_kwargs,
         )
 
