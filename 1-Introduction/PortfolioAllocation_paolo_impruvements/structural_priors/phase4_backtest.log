@@ -1,0 +1,68 @@
+seeds=[42, 1337, 7, 17, 100]  (ensemble size = 5)
+walk_forward=off
+
+Backtesting PPO (ensemble of 5 seeds)...
+=================================
+begin_total_asset:100000000
+end_total_asset:172740185.04035878
+Sharpe:  1.0617146688814254
+=================================
+=================================
+begin_total_asset:100000000
+end_total_asset:174758409.05457282
+Sharpe:  1.1117548285421477
+=================================
+=================================
+begin_total_asset:100000000
+end_total_asset:168445945.23990938
+Sharpe:  1.045985093715559
+=================================
+=================================
+begin_total_asset:100000000
+end_total_asset:182555398.03804672
+Sharpe:  1.1015942973638038
+=================================
+=================================
+begin_total_asset:100000000
+end_total_asset:171519751.41248608
+Sharpe:  1.0896680497611526
+=================================
+Saved /Users/paolobortolotti/FinRL-Tutorials/1-Introduction/PortfolioAllocation_paolo_impruvements/structural_priors/results_phase4_weekly/weights_ppo.csv
+
+Computing Min-Variance baseline...
+Computing Equal-Weight baseline...
+
+Saved /Users/paolobortolotti/FinRL-Tutorials/1-Introduction/PortfolioAllocation_paolo_impruvements/structural_priors/results_phase4_weekly/equity_curves.csv
+Saved /Users/paolobortolotti/FinRL-Tutorials/1-Introduction/PortfolioAllocation_paolo_impruvements/structural_priors/results_phase4_weekly/equity_plot.png
+
+============================================================
+Strategy          CumReturn     Sharpe      MaxDD
+------------------------------------------------------------
+PPO                  74.77%      1.093    -15.45%
+MinVariance          16.61%      0.613    -12.77%
+EqualWeight          79.67%      1.103    -16.05%
+EqualWeight_w_Cash       72.60%      1.103    -14.97%
+============================================================
+
+Active-return statistics vs EqualWeight
+============================================================================================
+Strategy        Active_bps    TE_bps      IR   t_iid   p_iid    t_NW    p_NW     N
+--------------------------------------------------------------------------------------------
+PPO                 -0.20      3.30  -0.966   -2.34   0.019   -2.44   0.015  1477
+MinVariance         -3.07     41.84  -1.163   -2.82   0.005   -2.97   0.003  1477
+EqualWeight_w_Cash      -0.30      4.26  -1.103   -2.67   0.008   -2.77   0.006  1477
+============================================================================================
+Notes: Active_bps = mean daily active return (strategy - EqualWeight) in bps. TE_bps = daily tracking-error stdev in bps. IR = sqrt(252)*mean/std (annualised). t_iid/p_iid assume iid daily active returns; t_NW/p_NW use Newey-West HAC with lag = floor(N^(1/4)) to correct for daily serial correlation. Two-sided p-values; p < 0.05 ~= |t| > 1.96.
+
+Per-seed IR distribution vs EqualWeight (single-split, 5.9-year MDE @ p<0.05 ~ IR 0.8)
+============================================================================================
+Algo / seed         Active_bps    TE_bps      IR   t_iid   p_iid    t_NW    p_NW     N
+--------------------------------------------------------------------------------------------
+  PPO       s=42         -0.28      5.14  -0.856   -2.07   0.038   -2.31   0.021  1477
+  PPO       s=1337       -0.21      3.88  -0.850   -2.06   0.040   -2.18   0.029  1477
+  PPO       s=7          -0.46      4.41  -1.649   -3.99   0.000   -4.10   0.000  1477
+  PPO       s=17          0.12      6.77   0.278    0.67   0.500    0.70   0.485  1477
+  PPO       s=100        -0.34      4.36  -1.233   -2.99   0.003   -3.12   0.002  1477
+  PPO       MEAN                        -0.862  (sd=0.717, min=-1.649, max=0.278, signs +/- = 1/4)
+============================================================================================
+Notes: Cross-seed mean and sd are descriptive only; with N_seeds=5 the sd is not a power calculation. Use the IR ranges to gauge robustness: a tight cluster straddling zero confirms the ensemble's null result.
