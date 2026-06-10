@@ -1,0 +1,50 @@
+seeds=[42, 1337]  (ensemble size = 2)
+walk_forward=off
+
+Backtesting PPO (ensemble of 2 seeds)...
+=================================
+begin_total_asset:100000000
+end_total_asset:194969711.0357238
+Sharpe:  1.200753904580546
+=================================
+=================================
+begin_total_asset:100000000
+end_total_asset:188245793.7605153
+Sharpe:  1.1812406839828318
+=================================
+Saved /Users/paolobortolotti/FinRL-Tutorials/1-Introduction/PortfolioAllocation_paolo_impruvements/structural_priors/results_phase3_placebo_IC0/weights_ppo.csv
+
+Computing Min-Variance baseline...
+Computing Equal-Weight baseline...
+
+Saved /Users/paolobortolotti/FinRL-Tutorials/1-Introduction/PortfolioAllocation_paolo_impruvements/structural_priors/results_phase3_placebo_IC0/equity_curves.csv
+Saved /Users/paolobortolotti/FinRL-Tutorials/1-Introduction/PortfolioAllocation_paolo_impruvements/structural_priors/results_phase3_placebo_IC0/equity_plot.png
+
+============================================================
+Strategy          CumReturn     Sharpe      MaxDD
+------------------------------------------------------------
+PPO                  92.15%      1.198    -13.39%
+MinVariance          16.35%      0.669    -11.81%
+EqualWeight         100.39%      1.193    -14.16%
+EqualWeight_w_Cash       91.08%      1.193    -13.20%
+============================================================
+
+Active-return statistics vs EqualWeight
+============================================================================================
+Strategy        Active_bps    TE_bps      IR   t_iid   p_iid    t_NW    p_NW     N
+--------------------------------------------------------------------------------------------
+PPO                 -0.31      4.74  -1.046   -2.53   0.011   -2.68   0.007  1477
+MinVariance         -3.86     53.00  -1.158   -2.80   0.005   -3.15   0.002  1477
+EqualWeight_w_Cash      -0.35      4.68  -1.193   -2.89   0.004   -3.02   0.003  1477
+============================================================================================
+Notes: Active_bps = mean daily active return (strategy - EqualWeight) in bps. TE_bps = daily tracking-error stdev in bps. IR = sqrt(252)*mean/std (annualised). t_iid/p_iid assume iid daily active returns; t_NW/p_NW use Newey-West HAC with lag = floor(N^(1/4)) to correct for daily serial correlation. Two-sided p-values; p < 0.05 ~= |t| > 1.96.
+
+Per-seed IR distribution vs EqualWeight (single-split, 5.9-year MDE @ p<0.05 ~ IR 0.8)
+============================================================================================
+Algo / seed         Active_bps    TE_bps      IR   t_iid   p_iid    t_NW    p_NW     N
+--------------------------------------------------------------------------------------------
+  PPO       s=42         -0.21      4.81  -0.680   -1.65   0.099   -1.74   0.082  1477
+  PPO       s=1337       -0.46      5.82  -1.250   -3.03   0.002   -3.22   0.001  1477
+  PPO       MEAN                        -0.965  (sd=0.402, min=-1.250, max=-0.680, signs +/- = 0/2)
+============================================================================================
+Notes: Cross-seed mean and sd are descriptive only; with N_seeds=5 the sd is not a power calculation. Use the IR ranges to gauge robustness: a tight cluster straddling zero confirms the ensemble's null result.
