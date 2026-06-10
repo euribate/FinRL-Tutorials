@@ -7,10 +7,25 @@ of `order_target_percent` calls. The strategy holds no model and no state-
 reconstruction logic; it is a pure execution simulator.
 
 Semantics:
-  * Same-day-close fills via `cerebro.broker.set_coc(True)`. The weight
-    recorded for date d_t is the target the portfolio should be holding
-    at the CLOSE of d_t. Backtrader's "cheat on close" matches market
-    orders submitted in next() against the SAME bar's close price.
+  * Weight-date convention (IMPORTANT). FinRL's StockPortfolioEnv pairs each
+    action with the date its return is EARNED, not the date it was decided:
+    reset() seeds actions_memory with a dummy equal-weight row dated d_0, so
+    in weights_<algo>.csv the row dated d_t holds the weights DECIDED at the
+    close of d_{t-1} and in force DURING bar d_t (earning the d_{t-1} -> d_t
+    return). Replaying that row at the close of d_t would therefore lag the
+    env by one full bar: every weight vector would earn the NEXT day's return
+    instead of its own.
+    Fix: align_weights_to_decision_dates() relabels each row from its earn
+    date back to its decision date (row d_t -> index d_{t-1}) before the
+    replay starts. With that alignment, executing row d_t at the close of
+    bar d_t reproduces the env's timing exactly. Controlled by
+    execution.align_decision_dates in backtrader_config.json (default true;
+    set false to reproduce the old, one-bar-lagged behaviour).
+  * Same-day-close fills via `cerebro.broker.set_coc(True)`. After the
+    alignment above, the weight on row d_t is the target DECIDED at the close
+    of d_t; backtrader's "cheat on close" matches market orders submitted in
+    next() against the SAME bar's close price, establishing the position that
+    earns the d_t -> d_{t+1} return - matching the env.
   * Cash buffer (default 5%): target weights from the CSV (which sum to
     1.0 after softmax) are scaled by (1 - cash_buffer) so the broker has
     headroom for slippage / fractional-share rounding without rejecting
@@ -63,6 +78,50 @@ def load_weights_csv(path: Path) -> pd.DataFrame:
     return df
 
 
+def align_weights_to_decision_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """Relabel each weight row from its EARN date to its DECISION date.
+
+    FinRL's save_action_memory() indexes weights by the date their return is
+    earned: the row dated d_t was decided at the close of d_{t-1} and held
+    during bar d_t. The first row of each env episode (dated d_0) is a dummy
+    equal-weight placeholder injected by reset(), not an agent decision.
+
+    This function shifts every row back by ONE POSITION:
+
+        index:  [d_0,   d_1, d_2, ..., d_{N-1}]
+        values: [dummy, w_0, w_1, ..., w_{N-2}]
+                      ->
+        index:  [d_0, d_1, ..., d_{N-2}]
+        values: [w_0, w_1, ..., w_{N-2}]
+
+    so that the row dated d_t now holds the weights DECIDED at d_t's close.
+    Replaying it with coc=True at bar d_t then earns the d_t -> d_{t+1}
+    return - exactly what the env booked. The dummy row is discarded and the
+    final earn date (d_{N-1}) drops out, since its weights have no further
+    bar to earn inside the data.
+
+    Walk-forward caveat: the stitched CSV contains one dummy row per window
+    (each window's env episode starts with its own equal-weight placeholder).
+    After the positional shift, each interior window boundary maps that dummy
+    onto the LAST bar of the previous window, producing a single one-bar
+    rebalance toward equal weight at each of the boundaries. Stage 3 books a
+    0% return on each window's first bar for the same structural reason, so
+    this is a comparable (and arguably more realistic) treatment of the
+    boundary bar; the effect is one extra rebalance per window transition.
+    """
+    if len(df) < 2:
+        raise ValueError(
+            f"weights CSV has {len(df)} row(s); need at least 2 to align "
+            f"earn dates to decision dates."
+        )
+    aligned = pd.DataFrame(
+        df.values[1:],
+        index=df.index[:-1],
+        columns=df.columns,
+    )
+    return aligned
+
+
 def load_trade_df(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
@@ -106,12 +165,6 @@ class WeightReplayStrategy(bt.Strategy):
         ("min_weight_delta", 1e-4),
         ("verbosity", "info"),
         ("log_every_trade", False),
-        # Approach A: inference-only rebalance cadence. cadence='daily' is the
-        # default and preserves the previous behaviour; 'weekly' / 'monthly'
-        # only act on configured days, holding weights in between.
-        ("cadence", "daily"),
-        ("weekly_day_iso", 5),  # 5 = Friday (ISO weekday: MON=1 ... SUN=7)
-        ("monthly_day", 1),     # day of month for monthly cadence (1..28)
     )
 
     def __init__(self):
@@ -124,75 +177,20 @@ class WeightReplayStrategy(bt.Strategy):
                 f"Tickers missing from weights CSV: {sorted(missing)}. "
                 f"Make sure stage 3 was run with the same universe."
             )
-        # Cadence-tracking state.
-        self._cadence = str(self.p.cadence).lower()
-        if self._cadence not in ("daily", "weekly", "monthly"):
-            raise ValueError(
-                f"Unknown rebalance.cadence={self._cadence!r}; "
-                f"expected 'daily', 'weekly' or 'monthly'."
-            )
-        self._last_rebalance_date: pd.Timestamp | None = None
-        self._n_rebalances = 0
-        self._n_bars_total = 0
         if self.p.verbosity != "silent":
-            cad_desc = (self._cadence if self._cadence == "daily"
-                        else f"{self._cadence} (weekly_day_iso={self.p.weekly_day_iso}, "
-                             f"monthly_day={self.p.monthly_day})")
             print(f"WeightReplayStrategy: {len(self.tickers)} tickers, "
                   f"cash_buffer={self.p.cash_buffer}, "
                   f"sell_first={self.p.sell_first}, "
-                  f"weight rows={len(self.p.weights_df)}, "
-                  f"cadence={cad_desc}")
-
-    def _is_rebalance_day(self, current_date: pd.Timestamp) -> bool:
-        """Decide whether `current_date` is a rebalance day per the cadence.
-
-        - 'daily': always True (existing behaviour).
-        - 'weekly': True on the configured ISO weekday, OR if 7+ days have
-          passed since the last rebalance (catches holiday-rolled weeks
-          where the configured weekday was not a trading day).
-        - 'monthly': True only when the calendar month differs from the
-          last rebalance AND today.day >= monthly_day (so monthly_day=15
-          means 'first trading day on or after the 15th of each month';
-          monthly_day=1 effectively means 'first trading day of each month').
-        - On the first bar that has recorded weights, always True so the
-          replay opens a position.
-        """
-        if self._cadence == "daily":
-            return True
-        if self._last_rebalance_date is None:
-            return True
-        if self._cadence == "weekly":
-            if current_date.isoweekday() == int(self.p.weekly_day_iso):
-                return True
-            return (current_date - self._last_rebalance_date).days >= 7
-        if self._cadence == "monthly":
-            same_month = (
-                current_date.year == self._last_rebalance_date.year
-                and current_date.month == self._last_rebalance_date.month
-            )
-            if same_month:
-                return False
-            return current_date.day >= int(self.p.monthly_day)
-        return False  # unreachable
+                  f"weight rows={len(self.p.weights_df)}")
 
     def next(self):
         current_date = pd.Timestamp(self.datetime.date(0))
         # Record equity at the start of the bar (post-fills from previous bar
         # with coc=True - so this is end-of-previous-day equity).
         self.equity_curve.append((current_date.date(), self.broker.getvalue()))
-        self._n_bars_total += 1
 
         if current_date not in self.p.weights_df.index:
             return  # no recorded weights for this date
-
-        # Cadence gate (Approach A): on non-rebalance days, hold the existing
-        # position - the broker drifts naturally with prices. The agent's
-        # daily-recorded target weights are simply not acted upon.
-        if not self._is_rebalance_day(current_date):
-            return
-        self._last_rebalance_date = current_date
-        self._n_rebalances += 1
 
         raw = self.p.weights_df.loc[current_date]
         invested = 1.0 - float(self.p.cash_buffer)
@@ -428,42 +426,6 @@ def export_outputs(strat: WeightReplayStrategy, bt_cfg: dict,
                             ax.plot(curve_wc.index, curve_wc.values,
                                     label=f"{label} w/ Cash",
                                     linewidth=1.0, alpha=0.75, linestyle=":")
-                    # Structural-prior overlay: stage 3 wrote the static daily-
-                    # rebalanced Prior_{type} portfolio into results/equity_curves.csv;
-                    # read that column and overlay it (dash-dot). The right
-                    # comparator for a residual-policy PPO. Controlled by
-                    # benchmark.show_prior_baseline (default true); only fires
-                    # when policy_prior is enabled and the stage-3 column exists.
-                    pp_cfg = src_cfg.get("policy_prior", {}) or {}
-                    if (bench_cfg_l.get("show_prior_baseline", True)
-                            and pp_cfg.get("enabled", False)
-                            and pp_cfg.get("type", "none") != "none"):
-                        ptype     = str(pp_cfg.get("type"))
-                        prior_col = f"Prior_{ptype}"
-                        from utils import resolve_path
-                        s3_csv = resolve_path(src_cfg, "results_dir") / "equity_curves.csv"
-                        if s3_csv.exists():
-                            df_s3 = pd.read_csv(s3_csv)
-                            dc    = df_s3.columns[0]
-                            df_s3[dc] = pd.to_datetime(df_s3[dc])
-                            df_s3 = df_s3.set_index(dc).sort_index()
-                            if prior_col in df_s3.columns:
-                                prior_eq = df_s3[prior_col].astype(float)
-                                # Rescale to start at backtrader's initial cash so
-                                # the overlay is comparable with the replay equity.
-                                first = float(prior_eq.iloc[0])
-                                if first > 0:
-                                    scaled = prior_eq * (bt_cfg["broker"]["initial_cash"] / first)
-                                    scaled = scaled.reindex(eq_df.index).ffill()
-                                    ax.plot(scaled.index, scaled.values,
-                                            label=f"Prior ({ptype}, static)",
-                                            linewidth=1.0, alpha=0.85, linestyle="-.")
-                            else:
-                                print(f"NOTE: stage-3 equity_curves.csv has no "
-                                      f"{prior_col!r} column; skipping prior overlay.")
-                        else:
-                            print(f"NOTE: {s3_csv} not found; skipping prior overlay "
-                                  f"(re-run 03_backtest.py to produce it).")
                 except Exception as e:
                     print(f"Benchmark overlay failed (non-fatal): {e}")
             ax.set_title("Portfolio Equity - Backtrader Replay (recorded weights)")
@@ -503,16 +465,6 @@ def print_summary(strat: WeightReplayStrategy, initial: float, final: float) -> 
         won = ta.get("won", {}).get("total", 0)
         lost = ta.get("lost", {}).get("total", 0)
         print(f"Trades total/won/lost: {total} / {won} / {lost}")
-    # Approach A cadence summary: tells you exactly how many bars the
-    # strategy actually attempted a rebalance on, vs. how many bars
-    # received daily target weights from the agent.
-    cadence  = getattr(strat, "_cadence", "daily")
-    n_rebal  = getattr(strat, "_n_rebalances", None)
-    n_bars   = getattr(strat, "_n_bars_total", None)
-    if n_rebal is not None and n_bars:
-        pct = 100.0 * n_rebal / max(n_bars, 1)
-        print(f"Rebalance cadence:   {cadence:>14}  "
-              f"({n_rebal} rebalance bars of {n_bars} total = {pct:.1f}%)")
     print("=" * 60)
 
 
@@ -538,6 +490,28 @@ def main() -> None:
           f"{weights_df.index.min().date()} -> {weights_df.index.max().date()}  "
           f"{len(weights_df.columns)} tickers")
 
+    # Remember the ORIGINAL (earn-date) span before any realignment: auto_slice
+    # below must keep the final earn bar in the data feed so the last decision
+    # still earns its return after the rows are relabelled to decision dates.
+    weights_span = (weights_df.index.min(), weights_df.index.max())
+
+    # ----- earn-date -> decision-date alignment (timing fix) -----
+    # FinRL indexes each weight row by the date its return is EARNED (the row
+    # dated d_t was decided at d_{t-1}'s close). Without realignment, the
+    # coc=True replay below establishes every position one bar late, so each
+    # weight vector earns the NEXT day's return instead of its own - a
+    # systematic divergence from the stage-3 env curve unrelated to friction.
+    # Set execution.align_decision_dates=false to reproduce the old behaviour.
+    align = bool(bt_cfg.get("execution", {}).get("align_decision_dates", True))
+    if align:
+        weights_df = align_weights_to_decision_dates(weights_df)
+        print(f"  align_decision_dates=on: rows relabelled to decision dates "
+              f"({len(weights_df)} rows  "
+              f"{weights_df.index.min().date()} -> {weights_df.index.max().date()})")
+    else:
+        print("  align_decision_dates=off: WARNING - replay will hold each "
+              "weight vector one bar later than the env (legacy behaviour).")
+
     # ----- trade pickle (OHLCV per ticker) -----
     raw_pkl = bt_cfg["inputs"].get("trade_pickle") or "data/full_data.pkl"
     trade_pkl = Path(raw_pkl)
@@ -551,8 +525,11 @@ def main() -> None:
     # using data/trade_data.pkl (16 months) with a walk-forward weights CSV
     # that spans 7 years - or vice versa.
     if bt_cfg["inputs"].get("auto_slice", True):
-        w_start = weights_df.index.min().strftime("%Y-%m-%d")
-        w_end   = (weights_df.index.max() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        # Use the original earn-date span (not the realigned index) so the
+        # final bar - where the last decision earns its return - stays in
+        # the feed.
+        w_start = weights_span[0].strftime("%Y-%m-%d")
+        w_end   = (weights_span[1] + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         before = len(trade_df)
         trade_df = trade_df[(trade_df["date"] >= w_start) & (trade_df["date"] < w_end)]
         print(f"  auto_slice: {w_start} -> {w_end}  "
@@ -603,16 +580,6 @@ def main() -> None:
         cerebro.adddata(bt.feeds.PandasData(dataname=per_ticker[tic]), name=tic)
     print(f"Added {len(per_ticker)} data feeds.")
 
-    # Approach A: inference-only rebalance cadence (see backtrader_config.json
-    # 'rebalance' block; default 'daily' preserves the existing behaviour).
-    rb_cfg          = bt_cfg.get("rebalance", {}) or {}
-    cadence         = str(rb_cfg.get("cadence", "daily")).lower()
-    weekly_day_name = str(rb_cfg.get("weekly_day", "FRI")).upper()
-    iso_map         = {"MON": 1, "TUE": 2, "WED": 3, "THU": 4,
-                       "FRI": 5, "SAT": 6, "SUN": 7}
-    weekly_day_iso  = int(iso_map.get(weekly_day_name, 5))
-    monthly_day     = max(1, min(28, int(rb_cfg.get("monthly_day", 1))))
-
     cerebro.addstrategy(
         WeightReplayStrategy,
         weights_df=weights_df,
@@ -621,9 +588,6 @@ def main() -> None:
         min_weight_delta=bt_cfg["execution"].get("min_weight_delta", 1e-4),
         verbosity=bt_cfg["logging"]["verbosity"],
         log_every_trade=bt_cfg["logging"]["log_every_trade"],
-        cadence=cadence,
-        weekly_day_iso=weekly_day_iso,
-        monthly_day=monthly_day,
     )
 
     add_analyzers(cerebro, bt_cfg["analyzers"])

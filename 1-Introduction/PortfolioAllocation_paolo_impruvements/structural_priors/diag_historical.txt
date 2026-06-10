@@ -1,0 +1,27 @@
+
+Weights file : experiments/alpha_iv_typeinverse_vol_alpha0.0/results/weights_ppo.csv
+Assets (N)   : 14   equal weight = 7.14%
+Rows         : 2861  (12 dummy equal-weight rows excluded)
+Date range   : 2015-01-02 -> 2026-05-19
+
+Per-day realized statistics:
+  max weight             p01=0.0726  p25=0.0755  med=0.0785  p75=0.0868  p99=0.1476  max=0.1612
+  min weight             p01=0.0475  p25=0.0668  med=0.0690  p75=0.0701  p99=0.0711  max=0.0713
+  implied logit spread   p01=0.0229  p25=0.0749  med=0.1299  p75=0.2677  p99=1.0000  max=1.0000
+  L1 dist from equal-w   p01=0.0062  p25=0.0182  med=0.0351  p75=0.0775  p99=0.3558  max=0.4078
+  turnover |dw|          p01=0.0016  p25=0.0047  med=0.0091  p75=0.0222  p99=0.1760  max=0.3641
+
+Legacy [0,1]-box caps for N=14: w_max <= 17.3%, w_min >= 6.36%, spread <= 1.0
+
+VERDICT
+  * Logit spread NEVER exceeds 1.0 (max=1.000): the legacy Box(0,1) cap is consistent with every row. The policy is operating inside (or pinned against) the structural cage.
+  * p99 spread = 1.000 hugs the 1.0 ceiling: the cap is BINDING - the policy is pushing against the wall. Widening the box (env.action_logit_scale) should be the first intervention; the agent wants to concentrate more than the geometry allows.
+  * Fraction of days within L1<0.05 of equal weight: 62.1%
+
+Theoretical single-asset weight caps for N=14 assets
+     logit box  spread    w_max    w_min
+ [0, 1] legacy     1.0    17.3%    6.36%
+      [-1, +1]     2.0    36.2%    4.90%
+      [-2, +2]     4.0    80.8%    1.48%
+      [-3, +3]     6.0    96.9%    0.24%
+      [-5, +5]    10.0    99.9%    0.00%

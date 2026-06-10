@@ -351,7 +351,59 @@ def fetch_yahoo_with_retry(ticker: str, start: str, end: str,
 _REWARD_KINDS = ("log_return", "diff_sharpe", "diff_sortino",
                  "article_absolute", "article_benchmark")
 
-_POLICY_PRIOR_TYPES = ("none", "equal_weight", "inverse_vol", "risk_parity")
+
+# ---------- structural-prior helpers (used by stage-3 baseline) --------------
+# NOTE: a previous restoration of utils.py removed the env-time residual-policy
+# integration AND these static helpers. Only the helpers are re-added here so
+# stage 3's compute_prior_baseline works (the env-time integration is a larger
+# change deferred until needed; with equal_weight prior and cash_share=1/N the
+# env-time mechanism is mathematically a no-op anyway because adding a constant
+# log(1/N) to all logits is softmax-invariant).
+
+def _solve_risk_parity(cov: np.ndarray, max_iter: int = 200,
+                       tol: float = 1e-9) -> np.ndarray:
+    """Solve equal-risk-contribution weights via SLSQP (multi-start)."""
+    from scipy.optimize import minimize
+    n = cov.shape[0]
+    if n == 0:
+        return np.zeros(0)
+    target = 1.0 / n
+
+    def loss(w):
+        w = np.asarray(w, dtype=float)
+        sw = cov @ w
+        rc = w * sw
+        rc_sum = max(float(rc.sum()), 1e-12)
+        return float(np.sum((rc / rc_sum - target) ** 2))
+
+    cons = [{"type": "eq", "fun": lambda w: float(w.sum() - 1.0)}]
+    bnds = [(1e-6, 1.0)] * n
+
+    diag = np.diag(cov).astype(float)
+    iv_start = 1.0 / np.sqrt(np.maximum(diag, 1e-12))
+    iv_start = iv_start / iv_start.sum()
+    starts = [np.full(n, 1.0 / n), iv_start]
+
+    best_w, best_loss = None, np.inf
+    for w0 in starts:
+        try:
+            out = minimize(loss, w0, bounds=bnds, constraints=cons,
+                           method="SLSQP",
+                           options={"maxiter": max_iter, "ftol": tol})
+            w_out = np.asarray(out.x, dtype=float)
+            s = float(w_out.sum())
+            if (not out.success) or (s <= 0.0) or (not np.all(np.isfinite(w_out))):
+                continue
+            w_norm = w_out / s
+            l = loss(w_norm)
+            if l < best_loss:
+                best_w, best_loss = w_norm, l
+        except Exception:
+            continue
+
+    if best_w is not None and best_loss < 1e-3:
+        return best_w
+    return iv_start
 
 
 def compute_prior_weights_from_cov(cov: np.ndarray,
@@ -360,19 +412,11 @@ def compute_prior_weights_from_cov(cov: np.ndarray,
                                    cash_share: float = None) -> np.ndarray:
     """Closed-form structural-prior weights from a covariance matrix.
 
-    Mirrors LogReturnPortfolioEnv._compute_prior_weights exactly so the
-    env's training-time prior and stage-3's static-prior baseline use
-    identical math. Cash (when cash_idx >= 0) is held out of the
-    covariance-based formula; cash_share defaults to 1/N (equal share).
+    Used by stage 3's compute_prior_baseline (and historically by the env-time
+    residual policy). Cash (when cash_idx >= 0) is held out of the covariance-
+    based formula; cash_share defaults to 1/N.
 
-    Args:
-        cov:        (N, N) covariance matrix from the trailing window.
-        prior_type: 'equal_weight' | 'inverse_vol' | 'risk_parity'.
-        cash_idx:   index of the CASH asset in the weight vector, or -1.
-        cash_share: target cash weight; None uses 1/N.
-
-    Returns:
-        (N,) weight vector summing to 1, all entries >= 1e-8.
+    prior_type: 'equal_weight' | 'inverse_vol' | 'risk_parity'.
     """
     n = cov.shape[0]
     has_cash = cash_idx >= 0
@@ -410,79 +454,6 @@ def compute_prior_weights_from_cov(cov: np.ndarray,
     else:
         w[:] = risky_w
     return np.clip(w, 1e-8, 1.0)
-
-
-def _solve_risk_parity(cov: np.ndarray, max_iter: int = 200,
-                       tol: float = 1e-9) -> np.ndarray:
-    """Solve for equal-risk-contribution weights on a covariance matrix.
-
-    Returns a vector w of length N summing to 1 such that each asset's risk
-    contribution w_i * (Sigma @ w)_i is approximately equal.
-
-    Implementation: SLSQP minimisation of the equal-risk-contribution loss
-        L(w) = sum_i (rc_i / rc.sum() - 1/N)^2
-    subject to sum(w) = 1 and w_i in [eps, 1].
-
-    The earlier fixed-point recipe (w *= sqrt(target / rc_frac)) is
-    *unreliable* on real covariance matrices that contain negative entries
-    (e.g. bond-equity off-diagonals): when (Sigma @ w)_i is negative for
-    some asset i, the floor-clamp on rc_frac produces a 7.7e10 update
-    ratio that catastrophically collapses the iteration onto the wrong
-    fixed point - confirmed numerically on the user data. SLSQP avoids
-    the issue by optimising the loss directly under the same constraints.
-    Falls back to equal weight on degenerate covariances or solver
-    failure.
-    """
-    from scipy.optimize import minimize
-
-    n = cov.shape[0]
-    if n == 0:
-        return np.zeros(0)
-    target = 1.0 / n
-
-    def loss(w):
-        w = np.asarray(w, dtype=float)
-        sw = cov @ w
-        rc = w * sw
-        rc_sum = max(float(rc.sum()), 1e-12)
-        rc_norm = rc / rc_sum
-        return float(np.sum((rc_norm - target) ** 2))
-
-    cons = [{"type": "eq", "fun": lambda w: float(w.sum() - 1.0)}]
-    bnds = [(1e-6, 1.0)] * n
-
-    # Multi-start: try uniform AND inverse-vol as starts; pick the best.
-    # SLSQP from uniform alone can converge to a corner on extreme-asymmetry
-    # covariances; inverse-vol is a much better warm-start for true RP.
-    diag = np.diag(cov).astype(float)
-    iv_start = 1.0 / np.sqrt(np.maximum(diag, 1e-12))
-    iv_start = iv_start / iv_start.sum()
-    starts   = [np.full(n, 1.0 / n), iv_start]
-
-    best_w, best_loss = None, np.inf
-    for w0 in starts:
-        try:
-            out = minimize(loss, w0, bounds=bnds, constraints=cons,
-                           method="SLSQP",
-                           options={"maxiter": max_iter, "ftol": tol})
-            w_out = np.asarray(out.x, dtype=float)
-            s = float(w_out.sum())
-            if (not out.success) or (s <= 0.0) or (not np.all(np.isfinite(w_out))):
-                continue
-            w_norm = w_out / s
-            l = loss(w_norm)
-            if l < best_loss:
-                best_w, best_loss = w_norm, l
-        except Exception:
-            continue
-
-    # Accept the solution only if it actually achieves near-equal risk
-    # contributions. Otherwise (ill-conditioned cov, solver stuck at a
-    # corner) fall back to inverse-vol, which is the diagonal-case exact
-    # answer and a known-good approximation for moderate correlations.
-    if best_w is not None and best_loss < 1e-3:
-        return best_w
-    return iv_start
 
 
 class LogReturnPortfolioEnv(StockPortfolioEnv):
@@ -550,10 +521,7 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
                  article_lambda_conc: float = 0.1,
                  cash_enabled: bool = False,
                  cash_ticker: str = "CASH",
-                 policy_prior_enabled: bool = False,
-                 policy_prior_type: str = "none",
-                 policy_prior_alpha: float = 1.0,
-                 policy_prior_cash_share: float = None,
+                 action_logit_scale: float = 1.0,
                  **kwargs):
         if reward_kind not in _REWARD_KINDS:
             raise ValueError(
@@ -563,10 +531,35 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         if turnover_mode not in ("naive", "drift_adjusted"):
             raise ValueError(f"Unknown turnover_mode={turnover_mode!r}; "
                              f"expected 'naive' or 'drift_adjusted'.")
-        if policy_prior_type not in _POLICY_PRIOR_TYPES:
-            raise ValueError(f"Unknown policy_prior_type={policy_prior_type!r}; "
-                             f"expected one of {_POLICY_PRIOR_TYPES}.")
         super().__init__(*args, **kwargs)
+        # ----- Action geometry fix (research step 1) -----
+        # Upstream StockPortfolioEnv declares action_space=Box(low=0, high=1)
+        # and then softmaxes the actions. SB3 clips actions to the box, so the
+        # softmax logits are confined to [0, 1]: a maximum logit spread of 1.0.
+        # With N assets the most concentrated reachable portfolio is therefore
+        #     w_max = e / (e + (N-1))      (N=6 -> ~35.2%)
+        #     w_min = 1 / (e + (N-1))      (N=6 -> ~13.0%)
+        # i.e. the policy structurally CANNOT deviate far from equal weight,
+        # regardless of what it learns. Widening the box to [-s, +s] gives a
+        # logit spread of 2s; s=3 (spread 6) already reaches ~98.8% single-asset
+        # concentration for N=6. The Box class is taken from the instance the
+        # parent created, so this works under both gym and gymnasium installs.
+        # action_logit_scale=1.0 keeps a symmetric [-1, 1] box (spread 2.0,
+        # w_max ~59.6% for N=6) - already a 2x improvement over upstream while
+        # remaining conservative; legacy upstream behaviour is NOT preserved
+        # under this subclass once the scale is applied, which is intentional.
+        self.action_logit_scale = float(action_logit_scale)
+        if self.action_logit_scale <= 0.0:
+            raise ValueError(
+                f"action_logit_scale must be > 0, got {self.action_logit_scale}."
+            )
+        _BoxCls = type(self.action_space)
+        self.action_space = _BoxCls(
+            low=-self.action_logit_scale,
+            high=+self.action_logit_scale,
+            shape=(self.stock_dim,),
+            dtype=np.float32,
+        )
         self.tc_penalty           = float(tc_penalty)
         self.reward_kind          = reward_kind
         self.turnover_mode        = turnover_mode
@@ -597,65 +590,6 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         self._A = 0.0  # E[R_t]
         self._B = 0.0  # E[R_t^2]
         self._D = 0.0  # E[min(R_t, 0)^2]  (downside second moment)
-        # Structural-prior policy (residual / "rules-based base + RL tilt").
-        # When enabled, before the parent's softmax_normalization the env adds
-        # alpha * log(w_prior) to the agent's raw action, so a zero action
-        # yields w_prior exactly and any non-zero action is a tilt away from
-        # it in log-space. See STRUCTURAL_PRIORS.md.
-        self.policy_prior_enabled    = bool(policy_prior_enabled)
-        self.policy_prior_type       = str(policy_prior_type)
-        self.policy_prior_alpha      = float(policy_prior_alpha)
-        self.policy_prior_cash_share = (None if policy_prior_cash_share is None
-                                        else float(policy_prior_cash_share))
-        # Per-day cache. The trailing 252-day covariance is a deterministic
-        # function of self.day, so the prior weights for a given day are
-        # identical across episodes - cache them to avoid re-running the
-        # SLSQP solver on every training step. Keyed by int(self.day).
-        # The cache is per-env-instance and per-policy_prior_type; safe as
-        # long as those don't mutate after __init__ (they don't).
-        self._prior_cache: dict = {}
-
-    def _compute_prior_weights(self) -> np.ndarray:
-        """Structural-prior weight vector for the current bar.
-
-        Delegates to the module-level compute_prior_weights_from_cov so the
-        env (training time) and stage-3's static-prior baseline (evaluation
-        time) share exactly the same formula. Uses self.covs (the trailing
-        252-day covariance, computed by the parent before its day += 1
-        advance), so there is no look-ahead.
-
-        Cached by int(self.day). The rolling covariance is a deterministic
-        function of the day index, so the prior is too - critical for
-        training performance when the underlying solver (e.g. SLSQP for
-        risk_parity) costs O(10ms) per call. PPO runs the same days
-        through many episodes; cache hit rate approaches 100% after the
-        first epoch.
-        """
-        key = int(self.day)
-        cached = self._prior_cache.get(key)
-        if cached is not None:
-            return cached
-        cash_idx = self.cash_idx if (self.cash_enabled and self.cash_idx >= 0) else -1
-        w = compute_prior_weights_from_cov(
-            cov=np.asarray(self.covs, dtype=float),
-            prior_type=self.policy_prior_type,
-            cash_idx=cash_idx,
-            cash_share=self.policy_prior_cash_share,
-        )
-        self._prior_cache[key] = w
-        return w
-
-    def _apply_policy_prior(self, actions):
-        """Inject the prior into the agent's pre-softmax action.
-
-        weights = softmax(actions + alpha * log(w_prior))
-        so at action == 0 the resulting weights are exactly w_prior, and any
-        non-zero action becomes a tilt away from w_prior in log-space.
-        """
-        w_prior   = self._compute_prior_weights()
-        log_prior = np.log(w_prior)
-        a = np.asarray(actions, dtype=float).copy()
-        return a + self.policy_prior_alpha * log_prior
 
     def reset(self, **kwargs):
         result = super().reset(**kwargs)
@@ -681,11 +615,6 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
         return val > self.turbulence_threshold
 
     def step(self, actions):
-        # Inject the structural prior in log-space BEFORE the parent's
-        # softmax_normalization. With a 'none'/disabled prior this is a no-op
-        # and behaviour is identical to the Article_priority_1 env.
-        if self.policy_prior_enabled and self.policy_prior_type != "none":
-            actions = self._apply_policy_prior(actions)
         obs, _reward, done, truncated, info = super().step(actions)
         if done or not self.portfolio_return_memory:
             return obs, self.reward, done, truncated, info
@@ -856,7 +785,7 @@ def resolve_path(config: dict, key: str) -> Path:
 
 
 def enabled_models(config: dict) -> list[str]:
-    # Skip non-dict values: doc strings like '_alignment_notes' may sit
+    # Skip non-dict siblings: doc strings like '_alignment_notes' may sit
     # alongside the algorithm blocks (a2c / ppo / ddpg / td3 / sac) under
     # config['models'] and must not be treated as algorithms themselves.
     return [name for name, cfg in config["models"].items()
@@ -1017,10 +946,8 @@ def parse_model_kwargs(model_kwargs: dict | None, n_actions: int) -> dict:
     FinRL's DRLAgent.get_model (stablebaselines3/models.py line ~121)
     expects model_kwargs['action_noise'] to be a STRING key into its
     OWN noise dict (same keys: 'normal', 'ornstein_uhlenbeck') and
-    constructs the noise itself. Pre-constructing here caused a KeyError
-    when FinRL tried to look up the noise OBJECT as a key in its NOISE
-    dict. Validating the string against NOISE_REGISTRY only catches
-    typos locally without producing the conflict.
+    constructs the noise itself. Pre-constructing here caused a
+    KeyError when FinRL tried to look up the noise OBJECT as a key.
     """
     if not model_kwargs:
         return {}
@@ -1103,6 +1030,11 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
     tc_penalty     = float(config["env"].get("transaction_cost_penalty", 0.0))
     turnover_mode  = config["env"].get("turnover_mode", "naive")
     diff_ratio_eta = float(config["env"].get("diff_ratio_eta", 1.0 / 252.0))
+    # Action geometry (research step 1): half-width of the symmetric logit box
+    # [-s, +s] fed to the softmax. Upstream's [0, 1] box caps single-asset
+    # weight at ~35% for 6 assets; s=3 lifts the cap to ~99%. Only honoured by
+    # LogReturnPortfolioEnv (shaped reward modes).
+    action_logit_scale = float(config["env"].get("action_logit_scale", 1.0))
 
     # Article reward coefficients (priority-1).
     ar_cfg               = config["env"].get("article_reward", {}) or {}
@@ -1147,6 +1079,13 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
                 f"shaped-reward modes (log_return / diff_sharpe / diff_sortino). "
                 f"The penalty will be ignored."
             )
+        if action_logit_scale != 1.0:
+            print(
+                f"WARNING: env.action_logit_scale={action_logit_scale} is set but "
+                f"env.reward_mode='value' uses the upstream StockPortfolioEnv, "
+                f"which keeps its hard-coded Box(0, 1) action space. The scale "
+                f"will be ignored; use a shaped reward mode to activate it."
+            )
         if risk_off_enabled:
             print(
                 f"WARNING: risk_off.enabled=true with reward_mode='value' - the "
@@ -1164,19 +1103,6 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
                 f"reward signal to ~{scaling * 0.01:g} - effectively zero gradient. "
                 f"Recommended: set env.reward_scaling=1.0 in config.json."
             )
-        pp_cfg = config.get("policy_prior", {}) or {}
-        policy_prior_enabled    = bool(pp_cfg.get("enabled", False))
-        policy_prior_type       = str(pp_cfg.get("type", "none"))
-        policy_prior_alpha      = float(pp_cfg.get("alpha", 1.0))
-        policy_prior_cash_share = pp_cfg.get("cash_share", None)
-        if policy_prior_cash_share is not None:
-            policy_prior_cash_share = float(policy_prior_cash_share)
-        if policy_prior_enabled and policy_prior_type == "none":
-            print(
-                "WARNING: policy_prior.enabled=true but policy_prior.type='none'. "
-                "Set type to one of 'equal_weight', 'inverse_vol', 'risk_parity'; "
-                "otherwise the prior is silently inactive."
-            )
         return LogReturnPortfolioEnv(
             df=df,
             tc_penalty=tc_penalty,
@@ -1190,10 +1116,7 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
             article_lambda_conc=article_lambda_conc,
             cash_enabled=cash_enabled,
             cash_ticker=cash_ticker,
-            policy_prior_enabled=policy_prior_enabled,
-            policy_prior_type=policy_prior_type,
-            policy_prior_alpha=policy_prior_alpha,
-            policy_prior_cash_share=policy_prior_cash_share,
+            action_logit_scale=action_logit_scale,
             **env_kwargs,
         )
 

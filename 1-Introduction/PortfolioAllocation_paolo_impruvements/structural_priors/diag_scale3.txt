@@ -1,0 +1,26 @@
+
+Weights file : results_scale3/weights_ppo.csv
+Assets (N)   : 14   equal weight = 7.14%
+Rows         : 1478  (1 dummy equal-weight rows excluded)
+Date range   : 2020-07-01 -> 2026-05-19
+
+Per-day realized statistics:
+  max weight             p01=0.0873  p25=0.1087  med=0.1290  p75=0.1687  p99=0.3142  max=0.4095
+  min weight             p01=0.0093  p25=0.0253  med=0.0349  p75=0.0439  p99=0.0586  max=0.0607
+  implied logit spread   p01=0.4544  p25=0.9495  med=1.3501  p75=1.8638  p99=3.3452  max=4.4245
+  L1 dist from equal-w   p01=0.1045  p25=0.2131  med=0.2905  p75=0.3931  p99=0.6631  max=0.7796
+  turnover |dw|          p01=0.0348  p25=0.0707  med=0.1003  p75=0.1407  p99=0.3786  max=0.6237
+
+Legacy [0,1]-box caps for N=14: w_max <= 17.3%, w_min >= 6.36%, spread <= 1.0
+
+VERDICT
+  * Logit spread exceeds 1.0 (max=4.424): the box has already been widened (or the CSV predates this analysis).
+  * Fraction of days within L1<0.05 of equal weight: 0.0%
+
+Theoretical single-asset weight caps for N=14 assets
+     logit box  spread    w_max    w_min
+ [0, 1] legacy     1.0    17.3%    6.36%
+      [-1, +1]     2.0    36.2%    4.90%
+      [-2, +2]     4.0    80.8%    1.48%
+      [-3, +3]     6.0    96.9%    0.24%
+      [-5, +5]    10.0    99.9%    0.00%

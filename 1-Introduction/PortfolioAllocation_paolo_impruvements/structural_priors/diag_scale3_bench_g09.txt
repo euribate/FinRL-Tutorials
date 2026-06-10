@@ -1,0 +1,27 @@
+
+Weights file : results_scale3_bench_g09/weights_ppo.csv
+Assets (N)   : 14   equal weight = 7.14%
+Rows         : 1478  (1 dummy equal-weight rows excluded)
+Date range   : 2020-07-01 -> 2026-05-19
+
+Per-day realized statistics:
+  max weight             p01=0.0736  p25=0.0768  med=0.0787  p75=0.0806  p99=0.0843  max=0.0884
+  min weight             p01=0.0623  p25=0.0649  med=0.0659  p75=0.0672  p99=0.0690  max=0.0697
+  implied logit spread   p01=0.0702  p25=0.1350  med=0.1782  p75=0.2150  p99=0.2798  max=0.3653
+  L1 dist from equal-w   p01=0.0155  p25=0.0312  med=0.0417  p75=0.0549  p99=0.0746  max=0.0868
+  turnover |dw|          p01=0.0021  p25=0.0042  med=0.0059  p75=0.0085  p99=0.0232  max=0.0403
+
+Legacy [0,1]-box caps for N=14: w_max <= 17.3%, w_min >= 6.36%, spread <= 1.0
+
+VERDICT
+  * Logit spread NEVER exceeds 1.0 (max=0.365): the legacy Box(0,1) cap is consistent with every row. The policy is operating inside (or pinned against) the structural cage.
+  * p99 spread = 0.280 sits well below 1.0: the policy is not even using the range it has. Geometry alone is not the whole story - expect incentive-layer fixes (reward baseline, ent_coef, gamma) to be needed too. Widen the box anyway so later experiments are interpretable.
+  * Fraction of days within L1<0.05 of equal weight: 63.2%
+
+Theoretical single-asset weight caps for N=14 assets
+     logit box  spread    w_max    w_min
+ [0, 1] legacy     1.0    17.3%    6.36%
+      [-1, +1]     2.0    36.2%    4.90%
+      [-2, +2]     4.0    80.8%    1.48%
+      [-3, +3]     6.0    96.9%    0.24%
+      [-5, +5]    10.0    99.9%    0.00%
