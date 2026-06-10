@@ -216,6 +216,27 @@ def _drawdown(df: pd.DataFrame, params: dict) -> dict[str, pd.Series]:
     return {"drawdown_60": s.reindex(df.index)}
 
 
+@register("alpha_signal", "per_asset")
+def _alpha_signal(df: pd.DataFrame, params: dict) -> dict[str, pd.Series]:
+    """Pass-through reader for a planted alpha_signal column (Phase 3 / synthetic).
+
+    Used by the signal-recovery test (gen_synthetic_data.py). The synthetic-data
+    generator injects an `alpha_signal` column directly into the DataFrame before
+    custom-feature computation; this builder just hands it through so the env's
+    state includes it as one of the per-asset features. On real data the column
+    will be absent and this builder raises KeyError, so the feature must NOT be
+    listed in custom_features.per_asset for real-data configs.
+    """
+    if "alpha_signal" not in df.columns:
+        raise KeyError(
+            "alpha_signal feature requested but the column is missing. The "
+            "column must be planted by gen_synthetic_data.py (Phase 3 only). "
+            "Remove 'alpha_signal' from custom_features.per_asset for real-data "
+            "configs."
+        )
+    return {"alpha_signal": df["alpha_signal"].reindex(df.index)}
+
+
 # ---------------------------------------------------------------------------
 # Global feature builders (same value across tickers on a given date)
 # ---------------------------------------------------------------------------
