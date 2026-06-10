@@ -1,5 +1,30 @@
 """Stage 4 - Backtrader replay of pre-recorded daily portfolio weights.
 
+================================================================
+UNMAINTAINED — KNOWN BUG: ONE-BAR EXECUTION LAG
+================================================================
+This version of stage 4 does NOT apply the earn-date / decision-date
+realignment fix (`align_weights_to_decision_dates`) that was added
+to the structural_priors copy of this script.
+
+The bug: FinRL's StockPortfolioEnv.save_action_memory() dates row d_t
+with the weights w_{t-1} (the EARN date, the bar those weights were
+held over), not the DECISION date (the close at which they were chosen).
+Without realignment, backtrader executes today's target at TOMORROW's
+close — a one-bar look-ahead-free but lagged-action artifact that
+materially distorts results.
+
+**Use `../structural_priors/04_backtrader_replay.py` instead**, which:
+  * Defines `align_weights_to_decision_dates(df)` (line ~81).
+  * Reads `execution.align_decision_dates` from backtrader_config.json
+    (default true) and applies the relabel before strategy attach.
+  * Is the maintained, validated version for all post-triage work.
+
+Any cadence-sweep / EXPERIMENTS work in this Article_priority_1 folder
+that called this script before the structural_priors port is also
+affected; re-run those through structural_priors/ before trusting them.
+================================================================
+
 This stage no longer runs the SB3 model inside the strategy. Instead it reads
 the per-day post-softmax weight vector that stage 3 already produced
 (results/weights_<algo>.csv) and replays it through backtrader as a sequence
