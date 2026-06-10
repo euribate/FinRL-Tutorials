@@ -1,6 +1,6 @@
 """Sanity tests for the structural-priors helpers (METHODOLOGY.md sec. 5.1).
 
-Three tests, each printing inputs / outputs / PASS-FAIL:
+Four tests, each printing inputs / outputs / PASS-FAIL:
 
   1) _solve_risk_parity on a hand-picked 3-asset covariance returns weights
      whose RISK CONTRIBUTIONS are approximately equal (each ≈ 1/3).
@@ -12,6 +12,11 @@ Three tests, each printing inputs / outputs / PASS-FAIL:
   3) softmax(0 + alpha * log(w_prior)) == w_prior exactly when alpha=1.0.
      This is the algebraic identity that justifies the residual-policy
      formulation: at action=0 the agent's allocation IS the prior.
+  4) softmax(a + alpha * log(w_eq)) == softmax(a) for ANY action vector a
+     and ANY alpha. This pins the equal_weight prior's mathematical no-op
+     property: with uniform w_prior, log(w_prior) is a constant vector and
+     softmax is shift-invariant, so the injection has no effect on the
+     resulting allocation. Documented in METHODOLOGY.md sec. 6.5.
 
 Run from this folder:
 
@@ -166,14 +171,50 @@ for a in (0.0, 0.5, 2.0):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# TEST 4 — equal_weight prior is a softmax-shift-invariant no-op
+# ─────────────────────────────────────────────────────────────────────────
+print()
+print("=" * 70)
+print("TEST 4 — softmax(a + alpha*log(w_eq)) == softmax(a) for any a, any alpha")
+print("=" * 70)
+
+# Three sanity slices: small alpha, alpha=1, large alpha. Three random
+# action vectors of varying scale (small / unit / large) so we catch any
+# numerical issue at the extremes too.
+rng    = np.random.default_rng(0)
+N      = 7  # arbitrary asset count
+w_eq   = np.full(N, 1.0 / N)
+
+max_diff_4 = 0.0
+for action_scale in (0.1, 1.0, 5.0):
+    a = rng.normal(scale=action_scale, size=N)
+    base = softmax(a)
+    for alpha in (0.25, 1.0, 3.0):
+        injected = softmax(a + alpha * np.log(w_eq))
+        diff = float(np.max(np.abs(injected - base)))
+        max_diff_4 = max(max_diff_4, diff)
+
+# Diagnostic: confirm log(w_eq) is a constant vector (the algebraic source).
+log_we = np.log(w_eq)
+print(f"  log(1/N) =              {np.round(log_we, 4)}   "
+      f"(constant: var = {float(log_we.var()):.3e})")
+print(f"  softmax(a + alpha*log(w_eq)) vs softmax(a):")
+print(f"    max |difference| over (action_scale, alpha) sweep: "
+      f"{max_diff_4:.3e}   (should be ~ 0)")
+ok_4 = bool(max_diff_4 < 1e-12)
+print(f"  RESULT:                 {'PASS' if ok_4 else 'FAIL'}")
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────
 print()
 print("=" * 70)
 print(f"SUMMARY:   test 1 = {'PASS' if ok_1 else 'FAIL'}    "
       f"test 2 = {'PASS' if ok_2 else 'FAIL'}    "
-      f"test 3 = {'PASS' if ok_3 else 'FAIL'}")
+      f"test 3 = {'PASS' if ok_3 else 'FAIL'}    "
+      f"test 4 = {'PASS' if ok_4 else 'FAIL'}")
 print("=" * 70)
 
-if not (ok_1 and ok_2 and ok_3):
+if not (ok_1 and ok_2 and ok_3 and ok_4):
     raise SystemExit(1)

@@ -131,6 +131,7 @@ def train_one(algo: str, train_df: pd.DataFrame, config: dict,
             min_delta=float(es_cfg.get("min_delta", 0.01)),
             ref_vecnormalize=env_train if norm_on else None,
             vn_save_path=vn_save_path,
+            selection_metric=str(es_cfg.get("selection_metric", "sharpe")),
         )
         callbacks = CallbackList([TensorboardCallback(), es_callback])
         model.learn(

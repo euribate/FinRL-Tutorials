@@ -1127,17 +1127,27 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
 
 
 class ValidationSharpeCallback(BaseCallback):
-    """Early stopping on annualised Sharpe of the validation slice (improvement #5).
+    """Early stopping on a configurable validation score (improvement #5).
 
     Every `eval_freq` training timesteps, the current policy is rolled out
     deterministically through a fresh env built from `val_df`, the env's
-    `portfolio_return_memory` is extracted, and annualised Sharpe is computed
-    as `sqrt(252) * mean(returns) / std(returns)`. The best model so far is
-    saved to `model_save_path`; if no improvement larger than `min_delta` is
-    seen for `patience` consecutive evaluations, `_on_step` returns False and
-    SB3 terminates training early.
+    `portfolio_return_memory` is extracted, and a scalar score is computed.
+    The best model so far is saved to `model_save_path`; if no improvement
+    larger than `min_delta` is seen for `patience` consecutive evaluations,
+    `_on_step` returns False and SB3 terminates training early.
 
-    A history JSON (timesteps, sharpe, improved) is written next to the model
+    selection_metric controls the score and SHOULD MATCH THE REWARD:
+      * 'sharpe' (default): annualised Sharpe of the strategy returns,
+        sqrt(252) * mean(r) / std(r). Use with reward_mode in
+        {'value','log_return','diff_sharpe','diff_sortino','article_absolute'}.
+      * 'ir': annualised Information Ratio of (strategy - benchmark) returns,
+        sqrt(252) * mean(r_active) / std(r_active). Use with
+        reward_mode='article_benchmark' so model selection optimises the
+        same objective the reward shapes against. Requires the val env to
+        produce a per-bar benchmark return; we recompute it from val_df's
+        `benchmark_return` column to avoid relying on env internals.
+
+    A history JSON (timesteps, score, improved) is written next to the model
     for inspection.
     """
 
@@ -1152,7 +1162,8 @@ class ValidationSharpeCallback(BaseCallback):
                  min_delta: float = 0.01,
                  verbose: int = 1,
                  ref_vecnormalize: VecNormalize | None = None,
-                 vn_save_path: Path | None = None):
+                 vn_save_path: Path | None = None,
+                 selection_metric: str = "sharpe"):
         super().__init__(verbose)
         self.val_df          = val_df
         self.config          = config
@@ -1162,6 +1173,11 @@ class ValidationSharpeCallback(BaseCallback):
         self.eval_freq       = int(eval_freq)
         self.patience        = int(patience)
         self.min_delta       = float(min_delta)
+        if selection_metric not in ("sharpe", "ir"):
+            raise ValueError(
+                f"selection_metric must be 'sharpe' or 'ir', got {selection_metric!r}."
+            )
+        self.selection_metric = selection_metric
 
         # Improvement #6: optional VecNormalize support.
         # ref_vecnormalize is the training-env VecNormalize wrapper. When set,
@@ -1183,11 +1199,12 @@ class ValidationSharpeCallback(BaseCallback):
             return True
         self._next_eval += self.eval_freq
 
-        sharpe = self._evaluate_sharpe()
-        improved = sharpe > (self.best_sharpe + self.min_delta)
+        score = self._evaluate_sharpe()
+        improved = score > (self.best_sharpe + self.min_delta)
+        label = self.selection_metric.upper()  # "SHARPE" or "IR"
         if improved:
             prev = self.best_sharpe
-            self.best_sharpe = sharpe
+            self.best_sharpe = score
             self.no_improvement_count = 0
             self.model.save(str(self.model_save_path))
             # Improvement #6: also persist a stats snapshot so the saved model
@@ -1200,20 +1217,21 @@ class ValidationSharpeCallback(BaseCallback):
             if self.verbose:
                 prev_str = "-inf" if prev == -np.inf else f"{prev:.4f}"
                 vn_note  = "  +stats" if (self.ref_vn is not None and self.vn_save_path is not None) else ""
-                print(f"  [step {self.num_timesteps}] val Sharpe improved: "
-                      f"{prev_str} -> {sharpe:.4f}, saved best to {self.model_save_path.name}{vn_note}")
+                print(f"  [step {self.num_timesteps}] val {label} improved: "
+                      f"{prev_str} -> {score:.4f}, saved best to {self.model_save_path.name}{vn_note}")
         else:
             self.no_improvement_count += 1
             if self.verbose:
-                print(f"  [step {self.num_timesteps}] val Sharpe={sharpe:.4f} "
+                print(f"  [step {self.num_timesteps}] val {label}={score:.4f} "
                       f"(best={self.best_sharpe:.4f}, "
                       f"no-improvement {self.no_improvement_count}/{self.patience})")
 
         self.history.append({
-            "timesteps": int(self.num_timesteps),
-            "sharpe":    float(sharpe),
-            "improved":  bool(improved),
-            "best_so_far": float(self.best_sharpe),
+            "timesteps":        int(self.num_timesteps),
+            "score":            float(score),
+            "selection_metric": self.selection_metric,
+            "improved":         bool(improved),
+            "best_so_far":      float(self.best_sharpe),
         })
 
         if self.no_improvement_count >= self.patience:
@@ -1244,7 +1262,15 @@ class ValidationSharpeCallback(BaseCallback):
             print(f"  WARNING: could not write history to {self.history_path}: {e}")
 
     def _evaluate_sharpe(self) -> float:
-        """Roll the current model through the validation env, compute Sharpe.
+        """Roll the current model through the validation env, compute the score.
+
+        Score = Sharpe (selection_metric='sharpe', default) or annualised IR
+        of strategy-minus-benchmark daily returns (selection_metric='ir').
+
+        For IR, the benchmark is taken from self.val_df['benchmark_return']
+        (written by stage 1 / 01_get_data.py). We align it to the strategy
+        returns by date — both series come from the same val window so dates
+        match 1-1 after the standard 'drop first row' step.
 
         With improvement #6 enabled (self.ref_vn set), the eval venv is wrapped
         with a snapshot of the training VecNormalize so observations are
@@ -1274,10 +1300,41 @@ class ValidationSharpeCallback(BaseCallback):
             returns = returns[1:]
         if len(returns) == 0:
             return -np.inf
-        std = float(returns.std())
-        if std < 1e-12:
+
+        if self.selection_metric == "sharpe":
+            std = float(returns.std())
+            if std < 1e-12:
+                return -np.inf
+            return float(np.sqrt(252.0) * float(returns.mean()) / std)
+
+        # selection_metric == "ir": active return vs benchmark_return column.
+        if "benchmark_return" not in self.val_df.columns:
+            # Fall back to Sharpe rather than crash. Stage 1 writes
+            # benchmark_return when benchmark.type='equal_weight'; if it's
+            # missing the user picked a non-EW reward setup.
+            std = float(returns.std())
+            if std < 1e-12:
+                return -np.inf
+            return float(np.sqrt(252.0) * float(returns.mean()) / std)
+
+        # One benchmark value per date (asset-independent column written by
+        # stage 1). Use unique-date order to match the strategy series.
+        bench_by_date = (self.val_df[["date", "benchmark_return"]]
+                         .drop_duplicates("date")
+                         .sort_values("date"))
+        # The env's daily_return series has length n_days; after the
+        # n_days-2 snapshot and the [1:] trim above, len(returns) == n_days-1
+        # (one return per *transition* between bars). The benchmark series
+        # is per-bar, so we align by taking the same number of trailing rows.
+        b = bench_by_date["benchmark_return"].to_numpy(dtype=float)
+        n = min(len(returns), len(b) - 1)
+        if n < 2:
             return -np.inf
-        return float(np.sqrt(252.0) * float(returns.mean()) / std)
+        active = returns[-n:] - b[-n:]
+        std_a = float(active.std())
+        if std_a < 1e-12:
+            return -np.inf
+        return float(np.sqrt(252.0) * float(active.mean()) / std_a)
 
 
 def compute_cov_features(df: pd.DataFrame, lookback: int) -> pd.DataFrame:

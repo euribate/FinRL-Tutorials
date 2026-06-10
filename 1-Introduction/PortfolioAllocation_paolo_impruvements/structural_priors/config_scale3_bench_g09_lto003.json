@@ -68,7 +68,7 @@
     "diff_ratio_eta": 0.00396825,
     "article_reward": {
       "return_scale": 1000.0,
-      "lambda_to": 0.0,
+      "lambda_to": 0.003,
       "lambda_conc": 0.0,
       "_notes": "Coefficients for the article reward modes (Kashif & Slepaczuk 2026), used only when reward_mode is 'article_absolute' or 'article_benchmark'. Formula: r = return_scale * log(1+r_net) [minus log(1+r_bench) for the benchmark variant] - lambda_to * turnover * 100 - lambda_conc * (HHI - 1/N) * 100, where r_net is the return already net of the drift-adjusted transaction cost (env.transaction_cost_penalty), turnover is the drift-adjusted L1 turnover, HHI = sum(w_i^2) is the Herfindahl concentration of the target weights, and N is the number of weights (incl. cash if enabled). NOTE: turnover is charged TWICE on purpose, exactly as in the paper - once as the real cost inside r_net, once as the lambda_to shaping penalty. Paper defaults: return_scale=1000, lambda_to=0.003, lambda_conc in {0.0, 0.1, 0.5} (0.1 chosen here). The benchmark variant uses the benchmark defined in the 'benchmark' block.",
       "_lambda_conc_note": "0.0 disables the concentration penalty (agent free to concentrate); 0.1 mild diversification pressure; 0.5 strong push toward equal weight (HHI_min = 1/N)."
@@ -283,9 +283,9 @@
   },
   "paths": {
     "data_dir": "data",
-    "model_dir": "models_scale3_bench_g09",
-    "results_dir": "results_scale3_bench_g09",
-    "tensorboard_dir": "tb_scale3_bench_g09"
+    "model_dir": "models_scale3_bench_g09_lto003",
+    "results_dir": "results_scale3_bench_g09_lto003",
+    "tensorboard_dir": "tb_scale3_bench_g09_lto003"
   },
   "walk_forward": {
     "enabled": false,

@@ -417,6 +417,7 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
                  article_lambda_conc: float = 0.1,
                  cash_enabled: bool = False,
                  cash_ticker: str = "CASH",
+                 action_logit_scale: float = 1.0,
                  **kwargs):
         if reward_kind not in _REWARD_KINDS:
             raise ValueError(
@@ -427,6 +428,25 @@ class LogReturnPortfolioEnv(StockPortfolioEnv):
             raise ValueError(f"Unknown turnover_mode={turnover_mode!r}; "
                              f"expected 'naive' or 'drift_adjusted'.")
         super().__init__(*args, **kwargs)
+        # Action geometry (research step 1, ported from structural_priors).
+        # Upstream StockPortfolioEnv declares action_space=Box(low=0, high=1)
+        # which softmax-caps single-asset weight at e/(e+N-1) (~17% for N=14).
+        # Widen the box to [-s, +s] so the policy can express concentrated
+        # tilts. s=1.0 keeps a conservative [-1, +1] box (already 2x the
+        # upstream cap); s=3.0 reaches ~97% single-asset concentration for
+        # N=14. Only honoured by LogReturnPortfolioEnv (shaped reward modes).
+        self.action_logit_scale = float(action_logit_scale)
+        if self.action_logit_scale <= 0.0:
+            raise ValueError(
+                f"action_logit_scale must be > 0, got {self.action_logit_scale}."
+            )
+        _BoxCls = type(self.action_space)
+        self.action_space = _BoxCls(
+            low=-self.action_logit_scale,
+            high=+self.action_logit_scale,
+            shape=(self.stock_dim,),
+            dtype=np.float32,
+        )
         self.tc_penalty           = float(tc_penalty)
         self.reward_kind          = reward_kind
         self.turnover_mode        = turnover_mode
@@ -884,6 +904,10 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
     tc_penalty     = float(config["env"].get("transaction_cost_penalty", 0.0))
     turnover_mode  = config["env"].get("turnover_mode", "naive")
     diff_ratio_eta = float(config["env"].get("diff_ratio_eta", 1.0 / 252.0))
+    # Action geometry (research step 1): half-width of the symmetric logit
+    # box [-s, +s] fed to softmax. Default 1.0 = [-1, +1]; widen to break
+    # out of the upstream e/(e+N-1) single-asset cap. Shaped modes only.
+    action_logit_scale = float(config["env"].get("action_logit_scale", 1.0))
 
     # Article reward coefficients (priority-1).
     ar_cfg               = config["env"].get("article_reward", {}) or {}
@@ -928,6 +952,13 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
                 f"shaped-reward modes (log_return / diff_sharpe / diff_sortino). "
                 f"The penalty will be ignored."
             )
+        if action_logit_scale != 1.0:
+            print(
+                f"WARNING: env.action_logit_scale={action_logit_scale} is set but "
+                f"env.reward_mode='value' uses the upstream StockPortfolioEnv, "
+                f"which keeps its hard-coded Box(0, 1) action space. The scale "
+                f"will be ignored; use a shaped reward mode to activate it."
+            )
         if risk_off_enabled:
             print(
                 f"WARNING: risk_off.enabled=true with reward_mode='value' - the "
@@ -958,6 +989,7 @@ def make_portfolio_env(df: pd.DataFrame, config: dict, stock_dim: int):
             article_lambda_conc=article_lambda_conc,
             cash_enabled=cash_enabled,
             cash_ticker=cash_ticker,
+            action_logit_scale=action_logit_scale,
             **env_kwargs,
         )
 

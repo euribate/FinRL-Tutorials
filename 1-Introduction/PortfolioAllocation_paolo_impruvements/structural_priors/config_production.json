@@ -28,7 +28,9 @@
     "reward_scaling": 1.0,
     "reward_mode": "diff_sharpe",
     "transaction_cost_penalty": 0.001,
-    "diff_ratio_eta": 0.00396825
+    "diff_ratio_eta": 0.00396825,
+    "action_logit_scale": 1.0,
+    "_action_logit_scale_notes": "Half-width of the symmetric action box [-s, +s] fed to softmax. s=1.0 reproduces the production-validated geometry used by the deployed PPO ensemble. Widening (e.g. 3.0) was triage-validated only in config.json for the 13-ETF + article_benchmark setup; do NOT change here without re-validating the production recipe end-to-end."
   },
 
   "models": {

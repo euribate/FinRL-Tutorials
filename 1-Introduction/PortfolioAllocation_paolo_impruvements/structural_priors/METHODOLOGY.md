@@ -432,6 +432,51 @@ overrides the prior-modified softmax weights with 100 % CASH. On those
 days the prior is moot. This is by design — gate is hard safety, prior is
 soft anchor.
 
+### 6.5 `policy_prior` env-time injection is currently REMOVED
+
+The env-time residual-policy injection — `softmax(actions + alpha *
+log(w_prior))` — described throughout sections 2 and 3 above has been
+**removed from `LogReturnPortfolioEnv`** during the structural triage.
+The `policy_prior` config block now controls ONE thing only: which
+`Prior_{type}` static-baseline curve `03_backtest.py` emits as a
+comparator. `alpha` and `cash_share` are read at stage 3 only.
+
+Two consequences worth noting until the injection is restored or
+removed entirely:
+
+1. **`type: equal_weight` is a mathematical no-op even if injection is
+   restored.** `log(1/N) = -log(N) * 𝟙` is a constant vector, and
+   softmax is shift-invariant, so `softmax(a + alpha * log(1/N)) =
+   softmax(a)` for any alpha. The equal-weight prior arm is effectively a
+   *no-prior control*; sweeping alpha under it produces seed-noise-only
+   variation. Use `inverse_vol` or `risk_parity` for arms where alpha is
+   intended to matter.
+2. **`alpha` is the prior temperature, NOT a tilt-leverage knob.** Earlier
+   config notes claimed "alpha=2 makes the agent's tilts 2x as expressive";
+   that is incorrect. alpha scales the prior anchor (alpha<1 dilutes
+   toward uniform, alpha>1 sharpens); the agent's tilt expressiveness is
+   governed entirely by `env.action_logit_scale` — the action-box
+   half-width.
+
+### 6.6 Article-benchmark reward leg asymmetry (TC)
+
+The `article_benchmark` reward is `return_scale * log(1 + r_net) -
+log(1 + r_bench) - λ_to·turnover·100 - λ_conc·(HHI - 1/N)·100`. The
+agent's leg (`r_net`) is **net of transaction cost**
+(`transaction_cost_penalty * turnover` deducted, same accounting as the
+agent's book equity); the benchmark leg (`r_bench`) is **gross** —
+benchmark return is recomputed by stage 1 from per-bar equal-weight
+holdings with no cost model. This is a small structural headwind against
+the agent of roughly `tc_penalty * agent_turnover` per bar.
+
+This is a documented design choice (it keeps `r_bench` definitionally
+identical to the publishable equal-weight benchmark figure, instead of
+making it depend on a turnover assumption it doesn't actually carry).
+If the asymmetry ever materially blocks the agent from beating EW under
+this reward, the cleanest fix is to apply the same per-bar TC drag to
+`r_bench` using the same turnover-from-rebalance formula the agent's
+book uses.
+
 ---
 
 ## 7. References

@@ -349,6 +349,84 @@ def compute_metrics(equity: pd.Series) -> dict:
     }
 
 
+def compute_active_stats(strategy_equity: pd.Series,
+                         benchmark_equity: pd.Series) -> dict:
+    """Active-return statistics of `strategy` vs `benchmark`.
+
+    Aligns the two equity curves on common dates, computes daily active
+    returns r_active = r_strategy - r_benchmark, then reports:
+      * mean_active_bps : mean daily active return in basis points
+      * std_active_bps  : daily tracking error in bps
+      * ir              : annualised information ratio = sqrt(252) * mean / std
+      * t_iid           : paired t-stat assuming iid daily active returns
+      * p_iid           : two-sided p-value for t_iid
+      * t_nw            : Newey-West HAC-adjusted t-stat (lag = floor(T^(1/4)))
+      * p_nw            : two-sided p-value for t_nw
+      * n_days          : sample size used
+
+    The NW adjustment matters because daily active returns of a portfolio
+    strategy carry serial correlation (regime stickiness, position drift).
+    Reporting BOTH t_iid and t_nw lets the reader see how much the iid
+    assumption inflates significance. Both p-values use the normal
+    approximation (T >> 30 in practice).
+    """
+    s = strategy_equity.dropna()
+    b = benchmark_equity.dropna()
+    common = s.index.intersection(b.index)
+    if len(common) < 30:
+        return {k: np.nan for k in ["mean_active_bps", "std_active_bps", "ir",
+                                    "t_iid", "p_iid", "t_nw", "p_nw", "n_days"]}
+    r_s = s.loc[common].pct_change().dropna()
+    r_b = b.loc[common].pct_change().dropna()
+    common2 = r_s.index.intersection(r_b.index)
+    active = (r_s.loc[common2] - r_b.loc[common2]).values.astype(float)
+    n = len(active)
+    if n < 30:
+        return {k: np.nan for k in ["mean_active_bps", "std_active_bps", "ir",
+                                    "t_iid", "p_iid", "t_nw", "p_nw", "n_days"]}
+
+    mu  = float(active.mean())
+    sig = float(active.std(ddof=1))
+    ir  = float(np.sqrt(252.0) * mu / sig) if sig > 1e-18 else np.nan
+
+    # iid paired t-stat: t = mean / (std / sqrt(N))
+    t_iid = float(mu / (sig / np.sqrt(n))) if sig > 1e-18 else np.nan
+
+    # Newey-West HAC variance of the mean: sum of weighted autocovariances up
+    # to lag L = floor(T^(1/4)) (Bartlett kernel). For daily returns over a
+    # ~6-year sample, T ~ 1500 -> L = 6. Standard choice in finance.
+    L = int(np.floor(n ** 0.25))
+    centered = active - mu
+    gamma0 = float(np.dot(centered, centered) / n)
+    nw_var = gamma0
+    for lag in range(1, L + 1):
+        w_l = 1.0 - lag / (L + 1.0)
+        gam = float(np.dot(centered[lag:], centered[:-lag]) / n)
+        nw_var += 2.0 * w_l * gam
+    if nw_var > 1e-18:
+        nw_se = float(np.sqrt(nw_var / n))
+        t_nw  = float(mu / nw_se)
+    else:
+        t_nw = np.nan
+
+    from math import erf, sqrt
+    def two_sided_p(t):
+        if not np.isfinite(t):
+            return np.nan
+        return float(2.0 * (1.0 - 0.5 * (1.0 + erf(abs(t) / sqrt(2.0)))))
+
+    return {
+        "mean_active_bps": mu * 1e4,
+        "std_active_bps":  sig * 1e4,
+        "ir":              ir,
+        "t_iid":           t_iid,
+        "p_iid":           two_sided_p(t_iid),
+        "t_nw":            t_nw,
+        "p_nw":            two_sided_p(t_nw),
+        "n_days":          int(n),
+    }
+
+
 def trade_period_dates(config: dict, walk_forward: bool,
                        windows: list[tuple[str, str, str, str]] | None,
                        trade_df: pd.DataFrame | None) -> tuple[str, str]:
@@ -513,6 +591,41 @@ def main() -> None:
         print(f"{name:<14} {m['cum_return']*100:>11.2f}% "
               f"{m['sharpe']:>10.3f} {m['max_dd']*100:>9.2f}%")
     print("=" * 60)
+
+    # ---- Active-return statistics vs benchmark ----
+    # Pick the benchmark column to compare every strategy against. With
+    # benchmark.type='equal_weight' the natural anchor is the same EW
+    # curve the article_benchmark reward shapes against; with a ticker
+    # benchmark it's that ticker. Skips silently if the column wasn't
+    # generated (e.g. Yahoo timeout on the DJIA fetch).
+    if btype == "equal_weight":
+        bench_col = "EqualWeight"
+    else:
+        bench_col = bench_cfg.get("ticker", "DJIA")
+    if bench_col in result.columns:
+        print(f"\nActive-return statistics vs {bench_col}")
+        print("=" * 92)
+        print(f"{'Strategy':<14} {'Active_bps':>11} {'TE_bps':>9} "
+              f"{'IR':>7} {'t_iid':>7} {'p_iid':>7} {'t_NW':>7} {'p_NW':>7} {'N':>5}")
+        print("-" * 92)
+        for name in result.columns:
+            if name == bench_col:
+                continue
+            a = compute_active_stats(result[name], result[bench_col])
+            if not np.isfinite(a.get("ir", np.nan)):
+                continue
+            print(f"{name:<14} {a['mean_active_bps']:>10.2f}  "
+                  f"{a['std_active_bps']:>8.2f} "
+                  f"{a['ir']:>7.3f} "
+                  f"{a['t_iid']:>7.2f} {a['p_iid']:>7.3f} "
+                  f"{a['t_nw']:>7.2f} {a['p_nw']:>7.3f} "
+                  f"{a['n_days']:>5d}")
+        print("=" * 92)
+        print(f"Notes: Active_bps = mean daily active return (strategy - {bench_col}) in bps. "
+              f"TE_bps = daily tracking-error stdev in bps. IR = sqrt(252)*mean/std (annualised). "
+              f"t_iid/p_iid assume iid daily active returns; t_NW/p_NW use Newey-West HAC "
+              f"with lag = floor(N^(1/4)) to correct for daily serial correlation. "
+              f"Two-sided p-values; p < 0.05 ~= |t| > 1.96.")
 
 
 if __name__ == "__main__":
