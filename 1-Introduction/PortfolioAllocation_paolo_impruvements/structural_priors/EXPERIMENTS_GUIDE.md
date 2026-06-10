@@ -14,7 +14,10 @@ python run_experiments.py --experiments experiments.json --with-backtrader
 That runs every experiment in `experiments.json`, skips ones already in
 `experiments_results.csv` with `status=ok`, prints a ranked table at the end,
 and saves everything to `experiments_results.csv`. Add `--force` to re-run
-finished experiments. Use `--only NAME1,NAME2` to run a subset.
+finished experiments. Use `--only NAME1,NAME2` to run a subset; `--only`
+also accepts shell-style **glob patterns** (e.g. `--only "alpha_iv_*"`) so
+you don't have to enumerate every grid cell — see "Running, monitoring,
+reading results" below.
 
 ---
 
@@ -175,6 +178,27 @@ python run_experiments.py --experiments experiments.json --with-backtrader
 python run_experiments.py --experiments experiments.json --only baseline,gate_on --force
 ```
 
+**`--only` accepts shell-style glob patterns** (since the `fnmatch` patch):
+
+```bash
+# All cells from one grid block:
+python run_experiments.py --experiments experiments.json --only "alpha_iv_*" --with-backtrader
+
+# All round-2 prior-type experiments:
+python run_experiments.py --experiments experiments.json --only "type_*"
+
+# Mix of patterns and exact names (comma-separated):
+python run_experiments.py --experiments experiments.json --only "baseline,prior_off,alpha_*"
+
+# Both alpha-sweep grids together:
+python run_experiments.py --experiments experiments.json --only "alpha_*"
+```
+
+**Quote any pattern containing `*` or `?`** so the shell doesn't try to
+expand it as a file glob before python sees it. Bare names without
+metacharacters still match exactly — old `--only baseline,gate_on` usage
+is unchanged.
+
 **Background it** so it survives terminal closure:
 
 ```bash
@@ -229,6 +253,13 @@ tail -f sweep.log
    an existing experiment (e.g., `alpha_alpha1.0` with `policy_prior.alpha=1.0`
    when the base config already has 1.0) should produce **byte-identical**
    results to the baseline. Useful as a sanity check.
+
+7. **`--only` accepts globs but they must be quoted.** Use `--only "alpha_iv_*"`
+   (with the quotes) to run every cell whose name starts with `alpha_iv_`.
+   Without the quotes, the shell tries to expand `*` against your current
+   directory's files first and you get a `no matches found` error or
+   silently-wrong selection. Comma-separated mixes of patterns and exact
+   names work too: `--only "baseline,prior_off,alpha_iv_*"`.
 
 ---
 

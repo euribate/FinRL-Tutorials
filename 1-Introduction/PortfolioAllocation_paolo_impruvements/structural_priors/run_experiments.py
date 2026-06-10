@@ -87,6 +87,22 @@ def load_experiment_list(spec: dict) -> list[dict]:
 
 # ---------- metric helpers (computed from saved CSVs) ----------
 
+def active_algo(cfg: dict) -> str:
+    """Return the single algo name with use=true under cfg['models'].
+
+    Skips non-dict siblings (e.g. '_alignment_notes' doc strings) the
+    same way utils.enabled_models does. Falls back to 'ppo' if zero or
+    multiple algorithms are enabled - the runner previously assumed
+    'ppo' always, so this preserves backward compatibility when an
+    experiment doesn't explicitly switch the model.
+    """
+    enabled = [name for name, sub in cfg.get("models", {}).items()
+               if isinstance(sub, dict) and sub.get("use", False)]
+    if len(enabled) == 1:
+        return enabled[0]
+    return "ppo"
+
+
 def metrics_from_equity(s: pd.Series) -> dict:
     s = s.dropna()
     if len(s) < 3:
@@ -99,15 +115,17 @@ def metrics_from_equity(s: pd.Series) -> dict:
     return {"cum_return": cum, "sharpe": sharpe, "max_dd": dd, "cagr": cagr}
 
 
-def collect_env_metrics(results_dir: Path) -> dict:
+def collect_env_metrics(results_dir: Path, algo: str = "ppo") -> dict:
     eq_path = results_dir / "equity_curves.csv"
     eq = pd.read_csv(eq_path, index_col=0, parse_dates=True)
     out: dict = {}
-    ppo = metrics_from_equity(eq["PPO"]) if "PPO" in eq.columns else {}
-    out["env_cum_return"] = ppo.get("cum_return", np.nan)
-    out["env_sharpe"]     = ppo.get("sharpe", np.nan)
-    out["env_maxdd"]      = ppo.get("max_dd", np.nan)
-    out["env_cagr"]       = ppo.get("cagr", np.nan)
+    # Stage 3 names the strategy column algo.upper() (PPO / A2C / DDPG / TD3 / SAC).
+    col = algo.upper()
+    m = metrics_from_equity(eq[col]) if col in eq.columns else {}
+    out["env_cum_return"] = m.get("cum_return", np.nan)
+    out["env_sharpe"]     = m.get("sharpe", np.nan)
+    out["env_maxdd"]      = m.get("max_dd", np.nan)
+    out["env_cagr"]       = m.get("cagr", np.nan)
     eqw_col = "EqualWeight" if "EqualWeight" in eq.columns else None
     out["env_eqw_sharpe"]    = metrics_from_equity(eq[eqw_col])["sharpe"] if eqw_col else np.nan
     out["env_minvar_sharpe"] = metrics_from_equity(eq["MinVariance"])["sharpe"] if "MinVariance" in eq.columns else np.nan
@@ -116,8 +134,9 @@ def collect_env_metrics(results_dir: Path) -> dict:
     return out
 
 
-def collect_activity_metrics(results_dir: Path, cash_ticker: str) -> dict:
-    wpath = results_dir / "weights_ppo.csv"
+def collect_activity_metrics(results_dir: Path, cash_ticker: str,
+                             algo: str = "ppo") -> dict:
+    wpath = results_dir / f"weights_{algo}.csv"
     if not wpath.exists():
         return {"risky_std": np.nan, "ann_turnover": np.nan, "regime_drift": np.nan}
     w = pd.read_csv(wpath, index_col=0, parse_dates=True).sort_index()
@@ -175,11 +194,11 @@ def derive_config(base_cfg: dict, exp: dict, exp_dir: Path,
 
 
 def derive_bt_config(base_bt: dict, exp_config_path: Path, exp_dir: Path,
-                     data_dir: Path) -> dict:
+                     data_dir: Path, algo: str = "ppo") -> dict:
     bt = copy.deepcopy(base_bt)
     bt["source_config"] = str(exp_config_path)
     bt.setdefault("inputs", {})
-    bt["inputs"]["weights_csv"]  = str(exp_dir / "results" / "weights_ppo.csv")
+    bt["inputs"]["weights_csv"]  = str(exp_dir / "results" / f"weights_{algo}.csv")
     bt["inputs"]["trade_pickle"] = str(data_dir / "full_data.pkl")
     bt.setdefault("output", {})
     bt["output"]["results_dir"] = str(exp_dir / "results_backtrader")
@@ -215,8 +234,16 @@ def main() -> None:
 
     exps = load_experiment_list(spec)
     if args.only:
-        want = set(args.only.split(","))
-        exps = [e for e in exps if e["name"] in want]
+        # Comma-separated list; each item is a SHELL-STYLE GLOB pattern
+        # (fnmatch). Bare names like 'baseline' still match exactly (they're
+        # trivial globs without metacharacters), so the old usage is
+        # unchanged. New: '--only "alpha_iv_*"' matches every cell whose
+        # name starts with 'alpha_iv_', so you don't have to enumerate
+        # every grid cell.
+        import fnmatch
+        patterns = [p.strip() for p in args.only.split(",") if p.strip()]
+        exps = [e for e in exps
+                if any(fnmatch.fnmatchcase(e["name"], p) for p in patterns)]
 
     results_path = HERE / args.results
     done = set()
@@ -256,6 +283,11 @@ def main() -> None:
         cfg = derive_config(base_cfg, exp, exp_dir, data_dir)
         cfg_path = exp_dir / "config.json"
         json.dump(cfg, open(cfg_path, "w"), indent=2)
+        # Identify the active algorithm for this experiment so the metric
+        # collectors (and the bt config) look up the correct algo-specific
+        # column / weights file. Backward compatible: defaults to 'ppo'
+        # when no model.use=true override is present.
+        algo = active_algo(cfg)
 
         status, tail = "ok", ""
         try:
@@ -271,11 +303,12 @@ def main() -> None:
                 raise RuntimeError("stage 3 (backtest) failed")
 
             row = {"name": name, "overrides": json.dumps(exp["overrides"])}
-            row.update(collect_env_metrics(exp_dir / "results"))
-            row.update(collect_activity_metrics(exp_dir / "results", cash_ticker))
+            row["algo"] = algo
+            row.update(collect_env_metrics(exp_dir / "results", algo=algo))
+            row.update(collect_activity_metrics(exp_dir / "results", cash_ticker, algo=algo))
 
             if args.with_backtrader and base_bt is not None:
-                bt_cfg = derive_bt_config(base_bt, cfg_path, exp_dir, data_dir)
+                bt_cfg = derive_bt_config(base_bt, cfg_path, exp_dir, data_dir, algo=algo)
                 bt_cfg_path = exp_dir / "backtrader_config.json"
                 json.dump(bt_cfg, open(bt_cfg_path, "w"), indent=2)
                 okb, tailb = run_stage("04_backtrader_replay.py", bt_cfg_path)

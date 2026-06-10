@@ -1,25 +1,30 @@
 {
-  "_description": "Experiments for the structural-priors folder. The base config has policy_prior.enabled=true with type='inverse_vol' and alpha=1.0, so the empty-override 'baseline' IS the residual policy. Other experiments isolate (a) the prior's marginal contribution by turning it off, (b) the choice of prior type, and (c) the blending strength alpha.",
+  "_description": "Prior-focused investigation. PPO is held constant throughout (the active model in config.json). Each experiment isolates ONE dimension of the residual-policy mechanism so any Sharpe difference can be attributed to that one knob. Run in three rounds (see _notes at bottom) for a paced exploration; or all 8 at once for an overnight sweep.",
 
   "base_config": "config.json",
 
   "experiments": [
-    { "name": "baseline",            "overrides": {} },
-    { "name": "prior_off",           "overrides": { "policy_prior.enabled": false, "policy_prior.type": "none" } },
-    { "name": "prior_equal_weight",  "overrides": { "policy_prior.type": "equal_weight" } },
-    { "name": "prior_risk_parity",   "overrides": { "policy_prior.type": "risk_parity" } },
-    { "name": "gate_off",            "overrides": { "risk_off.enabled": false } },
-    { "name": "gate_off_prior_off",  "overrides": { "risk_off.enabled": false, "policy_prior.enabled": false, "policy_prior.type": "none" } }
+    { "name": "baseline",         "overrides": {} },
+    { "name": "prior_off",        "overrides": { "policy_prior.enabled": false, "policy_prior.type": "none" } },
+    { "name": "type_inverse_vol", "overrides": { "policy_prior.type": "inverse_vol" } },
+    { "name": "type_risk_parity", "overrides": { "policy_prior.type": "risk_parity" } }
   ],
 
   "grid": [
     {
       "name_prefix": "alpha",
       "axes": {
-        "policy_prior.alpha": [0.25, 0.5, 1.0, 2.0]
+        "policy_prior.alpha": [0.0, 0.25, 1.0, 2.0]
+      }
+    },
+   {
+      "name_prefix": "alpha_iv",
+      "axes": {
+        "policy_prior.type":  ["inverse_vol"],
+        "policy_prior.alpha": [0.0, 0.25, 0.5, 1.0, 2.0]
       }
     }
   ],
 
-  "_notes": "Override keys are dotted paths into config.json. 'baseline' uses the base config as-is (inverse_vol, alpha=1.0). 'prior_off' is the control for measuring the prior's marginal contribution. 'prior_equal_weight' and 'prior_risk_parity' compare prior types. 'gate_off' / 'gate_off_prior_off' decompose the gate's contribution from the prior's. The alpha grid sweeps blending strength on the default inverse_vol prior; alpha=1.0 overlaps 'baseline' and serves as a determinism check. Already-completed names are skipped unless --force."
+  "_notes": "BASE CONFIG STATE — policy_prior.type='equal_weight', alpha=0.5. So 'baseline' = empty overrides = equal_weight @ alpha=0.5. — — — STRUCTURE — — — ROUND 1 — does the prior matter at all?   names: baseline, prior_off.   baseline gives equal_weight @ alpha=0.5 (the current config); prior_off disables the prior entirely (pure DRL). If baseline beats prior_off, the prior provides real lift. ROUND 2 — does the prior TYPE matter?   names: type_inverse_vol, type_risk_parity.   Both held at baseline's alpha=0.5; only the type changes. Compared to baseline (equal_weight). ROUND 3 — does the blending strength alpha matter?   the alpha grid generates 4 cells named alpha_alpha0.0, alpha_alpha0.25, alpha_alpha1.0, alpha_alpha2.0.   Held at baseline's type=equal_weight. alpha=0.0 is identical to prior_off behaviour-wise (determinism cross-check). alpha=0.5 is omitted because it overlaps baseline. — — — STAGED EXECUTION (recommended) — — — Round 1: 'python run_experiments.py --experiments experiments.json --only baseline,prior_off --with-backtrader' (~2-4h). Look at the ranked table. Decide whether to proceed. Round 2: '--only type_inverse_vol,type_risk_parity --with-backtrader' (~2-4h). Round 3: '--only alpha_alpha0.0,alpha_alpha0.25,alpha_alpha1.0,alpha_alpha2.0 --with-backtrader' (~4-8h). — — — ALL AT ONCE — — — Drop the --only flag: 'python run_experiments.py --experiments experiments.json --with-backtrader' (~8-16h overnight)."
 }

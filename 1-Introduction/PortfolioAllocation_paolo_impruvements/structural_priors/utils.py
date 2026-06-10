@@ -856,7 +856,11 @@ def resolve_path(config: dict, key: str) -> Path:
 
 
 def enabled_models(config: dict) -> list[str]:
-    return [name for name, cfg in config["models"].items() if cfg.get("use", False)]
+    # Skip non-dict values: doc strings like '_alignment_notes' may sit
+    # alongside the algorithm blocks (a2c / ppo / ddpg / td3 / sac) under
+    # config['models'] and must not be treated as algorithms themselves.
+    return [name for name, cfg in config["models"].items()
+            if isinstance(cfg, dict) and cfg.get("use", False)]
 
 
 def benchmark_label(config: dict) -> str:
@@ -1007,14 +1011,25 @@ def parse_policy_kwargs(policy_kwargs: dict | None) -> dict | None:
 
 
 def parse_model_kwargs(model_kwargs: dict | None, n_actions: int) -> dict:
+    """Pass model_kwargs through; specifically do NOT pre-construct the
+    action_noise object even though NOISE_REGISTRY is available locally.
+
+    FinRL's DRLAgent.get_model (stablebaselines3/models.py line ~121)
+    expects model_kwargs['action_noise'] to be a STRING key into its
+    OWN noise dict (same keys: 'normal', 'ornstein_uhlenbeck') and
+    constructs the noise itself. Pre-constructing here caused a KeyError
+    when FinRL tried to look up the noise OBJECT as a key in its NOISE
+    dict. Validating the string against NOISE_REGISTRY only catches
+    typos locally without producing the conflict.
+    """
     if not model_kwargs:
         return {}
     parsed = dict(model_kwargs)
     noise_name = parsed.get("action_noise")
-    if isinstance(noise_name, str):
-        parsed["action_noise"] = NOISE_REGISTRY[noise_name](
-            mean=np.zeros(n_actions),
-            sigma=0.1 * np.ones(n_actions),
+    if isinstance(noise_name, str) and noise_name not in NOISE_REGISTRY:
+        raise ValueError(
+            f"Unknown action_noise={noise_name!r}; "
+            f"expected one of {sorted(NOISE_REGISTRY)}."
         )
     return parsed
 

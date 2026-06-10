@@ -48,7 +48,7 @@
   },
 
   "rebalance": {
-    "cadence":      "monthly",
+    "cadence":      "daily",
     "weekly_day":   "FRI",
     "monthly_day":  1,
     "_notes": "Inference-only rebalance cadence (Approach A from METHODOLOGY.md Appendix A). When cadence != 'daily', the WeightReplayStrategy still receives the agent's daily target weights but only acts on configured rebalance days; on non-rebalance days the portfolio drifts naturally with prices. The agent's training and stage-3 backtest are UNAFFECTED - this is post-hoc execution discipline only, the cheap diagnostic for 'does rebalancing less often improve net-of-cost results?'. cadence: 'daily' (DEFAULT, behaves identically to the previous pipeline), 'weekly' (act on weekly_day, or the next trading day if that day is missed), 'monthly' (act on or after monthly_day in each new month). weekly_day uses ISO weekday names ('MON' - 'SUN'); 'FRI' is the typical end-of-week practitioner cadence. monthly_day is clamped to [1, 28] to avoid month-end issues. The B-only no-trade band (min_weight_delta above) still applies on rebalance bars - the cadence only authorises a rebalance attempt; per-ticker filtering happens after."
