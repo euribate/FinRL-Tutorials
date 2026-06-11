@@ -1,0 +1,74 @@
+{
+  "_notes": "Minimal config for structural_priors_improved. The legacy ~600-line config with dead 'policy_prior', 'normalization', 'walk_forward', 'risk_off' blocks is gone. Everything here is wired to live code; nothing is documentation-only.",
+
+  "data": {
+    "ticker_list": ["IVE","QQQ","SHY","TLT","LQD","HYG","GLD","EEM","VNQ","XLE","EFA","DBC","TIP"],
+    "download_start_date": "2007-08-01",
+    "train_start_date":    "2009-01-01",
+    "train_end_date":      "2020-07-01",
+    "trade_start_date":    "2020-07-01",
+    "trade_end_date":      "2026-05-20",
+    "indicators": ["macd","boll_ub","boll_lb","rsi_30","cci_30","dx_30","close_30_sma","close_60_sma"],
+    "custom_features": {
+      "per_asset": ["mom","vol","bb_pctb","dist_high_20","meanrev_20","beta_60","xsec_mom_rank","downside_semidev_20","drawdown_60"],
+      "global":    ["vix","xsec_avg_ret","breadth","mkt_ret"],
+      "params":    {},
+      "_step1_note": "Step 1 of the roadmap reduces this to 6-8 RANK-NORMALIZED per-asset features. Step 0 keeps the legacy set to prove the new skeleton reproduces the calibrated apparatus."
+    },
+    "lookback": 252,
+    "use_turbulence": true
+  },
+
+  "env": {
+    "action_logit_scale": 3.0,
+    "cost_bps":           10.0,
+    "cadence":            "daily",
+    "weekly_day":         "FRI",
+    "reward_scaling":     1.0,
+    "initial_amount":     100000000,
+    "_cost_bps_notes":    "All-in TC in basis points per unit of L1 turnover. 10 bps default ~ 5 bps each side. Set to 0 to disable.",
+    "_cadence_notes":     "'daily' = legacy. 'weekly' = native env action-repeat: agent's action only takes effect on weekly_day; on other bars the env replays the last rebalance-day action and accumulates reward."
+  },
+
+  "benchmark": { "type": "equal_weight" },
+
+  "cash": {
+    "enabled":        true,
+    "ticker":         "CASH",
+    "risk_free_rate": 0.0
+  },
+
+  "seeds": { "list": [42, 1337, 7, 17, 100] },
+
+  "model": {
+    "total_timesteps": 150000,
+    "policy_kwargs":   null,
+    "model_kwargs": {
+      "n_steps":     1024,
+      "ent_coef":    0.01,
+      "learning_rate": 0.0002,
+      "batch_size":  128,
+      "gamma":       0.9,
+      "clip_range":  0.3,
+      "n_epochs":    10,
+      "gae_lambda":  0.95,
+      "vf_coef":     0.5,
+      "max_grad_norm": 0.5
+    }
+  },
+
+  "early_stopping": {
+    "val_fraction": 0.1,
+    "eval_freq":    2500,
+    "patience":     20,
+    "min_delta":    0.001,
+    "_notes": "selection_metric is implicit (IR-only; the sharpe selector caused EW-anchored checkpoint pathology in the triage). Raise val_fraction to 0.3 if testing the IR-selection-overfit-on-small-val hypothesis."
+  },
+
+  "paths": {
+    "data_dir":        "data",
+    "model_dir":       "models",
+    "results_dir":     "results",
+    "tensorboard_dir": "tensorboard"
+  }
+}

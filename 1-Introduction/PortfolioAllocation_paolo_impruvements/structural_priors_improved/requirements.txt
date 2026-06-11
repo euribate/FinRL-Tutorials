@@ -1,0 +1,18 @@
+# Step-0 pin: exact versions known to work with the new vendored env.
+# The gym/gymnasium ambiguity bit us once in the legacy code; pinning
+# gymnasium (and dropping the gym import path entirely) eliminates that.
+#
+# FinRL is intentionally NOT in this list. The new env is self-contained.
+# FinRL's YahooDownloader + FeatureEngineer are still called from data.py
+# for Step 0 to reuse the existing data pipeline; Step 1 of the roadmap
+# replaces those with internal equivalents.
+
+stable_baselines3==2.9.0a2
+gymnasium==1.3.0
+torch==2.12.0
+numpy==2.4.4
+pandas==2.2.3
+scipy==1.17.1
+matplotlib
+finrl              # Step-0 only, for YahooDownloader + FeatureEngineer
+stockstats         # transitive — kept explicit so installs don't break
