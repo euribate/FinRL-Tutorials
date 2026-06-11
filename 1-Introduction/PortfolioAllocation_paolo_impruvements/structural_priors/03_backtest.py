@@ -609,13 +609,27 @@ def main() -> None:
     print("=" * 60)
 
     # ---- Active-return statistics vs benchmark ----
-    # Pick the benchmark column to compare every strategy against. With
-    # benchmark.type='equal_weight' the natural anchor is the same EW
-    # curve the article_benchmark reward shapes against; with a ticker
-    # benchmark it's that ticker. Skips silently if the column wasn't
-    # generated (e.g. Yahoo timeout on the DJIA fetch).
+    # Pick the benchmark column to compare every strategy against.
+    #
+    # IMPORTANT: when cash.enabled=true, the PPO agent has CASH as one of
+    # its allocatable assets and the trained policy structurally holds some
+    # fraction in cash on most bars (typical 5-15%). Comparing such a
+    # cash-holding strategy to the FULLY-INVESTED EqualWeight benchmark
+    # creates a systematic drag during periods where risk assets compounded
+    # significantly: avg_cash_weight * (EW_risky_return - cash_return) per
+    # bar, which can produce |IR| ~= 1 with significant t-stat purely from
+    # the cash exposure, with zero correlation between the strategy's tilt
+    # and any actual signal in the features. To control for this and isolate
+    # the agent's tilting skill, the active-stats benchmark is
+    # EqualWeight_w_Cash (also fully invested, but holds 1/(M+1) in CASH
+    # alongside 1/M in each risky asset) — the apples-to-apples comparator.
     if btype == "equal_weight":
-        bench_col = "EqualWeight"
+        # Prefer the cash-inclusive EW when available; it controls out the
+        # structural cash drag of the agent's allocations. Fall back to the
+        # cash-free EW only if the cash-inclusive column wasn't produced.
+        bench_col = ("EqualWeight_w_Cash"
+                     if "EqualWeight_w_Cash" in result.columns
+                     else "EqualWeight")
     else:
         bench_col = bench_cfg.get("ticker", "DJIA")
     if bench_col in result.columns:
@@ -642,6 +656,37 @@ def main() -> None:
               f"t_iid/p_iid assume iid daily active returns; t_NW/p_NW use Newey-West HAC "
               f"with lag = floor(N^(1/4)) to correct for daily serial correlation. "
               f"Two-sided p-values; p < 0.05 ~= |t| > 1.96.")
+
+        # ---- Cash-drag decomposition: side-by-side IRs vs both EW variants ----
+        # When BOTH EqualWeight (cash-free) and EqualWeight_w_Cash are emitted,
+        # show each strategy's IR vs each anchor side-by-side. The difference is
+        # the deterministic cash-drag effect: a strategy holding average cash
+        # weight c, against a cash-free EW that earned excess equity premium e
+        # per bar, has mechanical active return of -c*e per bar with ~zero
+        # tracking error contribution, producing |IR| up to ~1 purely from cash
+        # exposure with no correlation to any signal. Comparing to EW_w_Cash
+        # removes this drag.
+        if "EqualWeight" in result.columns and "EqualWeight_w_Cash" in result.columns:
+            print(f"\nCash-drag decomposition: IR vs both EW variants")
+            print("=" * 92)
+            print(f"{'Strategy':<20} {'IR vs EW (no cash)':>22} {'IR vs EW_w_Cash':>22} "
+                  f"{'Delta (= cash drag)':>26}")
+            print("-" * 92)
+            for name in result.columns:
+                if name in ("EqualWeight", "EqualWeight_w_Cash"):
+                    continue
+                a_no = compute_active_stats(result[name], result["EqualWeight"])
+                a_wc = compute_active_stats(result[name], result["EqualWeight_w_Cash"])
+                if not np.isfinite(a_no.get("ir", np.nan)) or \
+                   not np.isfinite(a_wc.get("ir", np.nan)):
+                    continue
+                delta = a_no["ir"] - a_wc["ir"]
+                print(f"{name:<20} {a_no['ir']:>22.3f} {a_wc['ir']:>22.3f} "
+                      f"{delta:>26.3f}")
+            print("=" * 92)
+            print(f"Reading: Delta is the deterministic effect of comparing a "
+                  f"cash-holding strategy to a cash-free benchmark. The "
+                  f"apples-to-apples IR is the EW_w_Cash column.")
 
         # ---- Per-seed dispersion report (single-split, multi-seed only) ----
         # When > 1 seeds are trained, show the per-seed IR distribution vs

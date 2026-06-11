@@ -1,111 +1,213 @@
-# Final results memo — four-phase triage closed
+# Final results memo — four-phase triage closed (CORRECTED)
 
-**Date**: 2026-06-10
-**Pipeline**: env-time weekly cadence, article_benchmark reward, IR
-selection, λ_TO = 0.003, action_logit_scale = 3.0, γ = 0.9.
+**Date**: 2026-06-11 (revision; supersedes 2026-06-10).
+**Pipeline**: env-time weekly cadence (Phase 4) or daily (Phase 1),
+article_benchmark reward, IR selection, λ_TO = 0.003, action_logit_scale
+= 3.0, γ = 0.9.
 **Universe**: 13 sector ETFs + CASH (N=14).
 **Evaluation window**: 2020-07-01 → 2026-05-19 (5.9 years, T=1477 bars).
 **Minimum-detectable IR at p<0.05 on this sample length**: ~ 0.8.
 
 ---
 
-## 1. Outcome table — all four phases + 3a calibration
+## 0. What changed in this revision
 
-| Phase | Setup | Ensemble IR vs EW | t_NW (p_NW) | Per-seed IR signs +/- |
+The original (2026-06-10) memo concluded that the pipeline exhibits a
+"structural negative bias" and "inverts signals." On analyst review, this
+conclusion was **incorrect**. The active-stats block in `03_backtest.py`
+benchmarked against `EqualWeight` (a cash-free, fully invested 1/M
+strategy), but the PPO agent has CASH as one of its 14 allocatable
+assets and structurally holds ~6.4-7.3% in cash. Comparing a cash-holding
+strategy to a cash-free benchmark during a period where risk assets
+compounded ~80% mechanically produces an IR of approximately -1 with a
+significant t-stat — purely from the cash exposure, with zero correlation
+to any signal in the features.
+
+The corrected active-stats benchmark is `EqualWeight_w_Cash` (also fully
+invested but holds 1/(M+1) in CASH alongside 1/M in each risky asset).
+This is the apples-to-apples comparator. The `03_backtest.py` script
+has been patched to use it automatically when cash is enabled, and a
+cash-drag decomposition block has been added that prints both IRs
+side-by-side so the drag is visible.
+
+All four phases were re-backtested against the corrected benchmark.
+No retraining was needed. The corrected results and revised conclusions
+are below.
+
+---
+
+## 1. Corrected outcome table — all four phases + 3a calibration
+
+| Phase | Setup | Ensemble IR vs EW_w_Cash (corrected) | t_NW (p_NW) | Per-seed signs (+/-) |
 |---|---|---|---|---|
-| **Phase 1** | Daily cadence, 5 seeds | −0.723 | −1.89 (0.059) | 1/4 |
-| **Phase 4** | Weekly cadence, 5 seeds | −0.966 | −2.44 (0.015) | 1/4 |
-| **Phase 3 placebo** | Synthetic IC=0, 2 seeds | **−1.046** | **−2.68 (0.007)** | **0/2** |
-| **Phase 3 IC=0.40** | Synthetic, realised IC=0.20, 2 seeds | **−1.322** | **−3.29 (0.001)** | **0/2** |
-| 3a theoretical ceiling | Perfect-info @ IC=0.20 | +10.27 (median) | — | — |
-| 3a theoretical ceiling | Perfect-info @ IC=0.40 | +21.17 (median) | — | — |
+| **Phase 1** | Daily cadence, 5 seeds | **+0.323** | +0.92 (0.359) | 3 / 2 |
+| **Phase 4** | Weekly cadence, 5 seeds | **+0.517** | +1.29 (0.196) | 3 / 2 |
+| **Phase 3 placebo** | Synthetic IC=0, 2 seeds | **+0.367** | +0.92 (0.359) | 1 / 1 |
+| **Phase 3 IC=0.40** | Synthetic realised IC≈0.37 at rebalance days, 2 seeds | **−0.214** | −0.54 (0.590) | 0 / 2 |
+| 3a theoretical at IC=0.20 | Perfect-info weekly, MC | +10.27 (median) | — | — |
+| 3a theoretical at IC=0.40 | Perfect-info weekly, MC | +21.17 (median) | — | — |
 
-**Pipeline efficiency at IC=0.20 (realised): −12.9%.**
-The pipeline does not just lose signal — it INVERTS sign at every IC level we measured.
-
----
-
-## 2. The reframe
-
-The original interpretation of Phase 1/Phase 4 was: "PPO's tilts subtract value vs EW with statistical evidence — features carry no exploitable signal."
-
-The Phase 3 placebo test, which the analyst pre-registered as non-negotiable, has shown that interpretation is **not supported by the data**:
-
-- On synthetic data with PLANTED IC = 0 (pure noise, mathematically no extractable signal), the pipeline still produces **IR = −1.05, p_NW = 0.007**.
-- On real data (Phase 1, Phase 4), the pipeline produces IR ≈ −0.7 to −0.97 — within the range of the placebo's structural bias.
-
-The pipeline has a **systematic negative bias of roughly −1 IR unit** on data that cannot carry signal. The real-data result is therefore consistent with real features carrying anywhere from no signal to substantial positive signal that the pipeline corrupts.
-
-The IC=0.40 test then shows the pipeline cannot extract even a strong planted signal: realised IC = 0.20 on the trade slice (block-bootstrap dilutes the planted 0.40), theoretical ceiling IR ≈ +10, observed IR = −1.32. **The pipeline does not have detection capacity above the noise floor.**
+**None of the four observed ensemble IRs is statistically distinguishable
+from zero** (all p_NW > 0.19). The pipeline behaves consistently with
+noise on all four arms.
 
 ---
 
-## 3. The corrected inference chain
+## 2. Cash-drag decomposition
 
-The analyst's intended publishable claim was:
+Side-by-side IR vs the old (incorrect) and new (correct) benchmarks,
+with the deterministic cash-drag delta:
 
-> "3b shows the pipeline recovers planted IC ≥ x → real data shows IR ≈ 0 → therefore the features carry less than x of extractable IC."
+| Phase | IR vs EW (no cash, OLD) | IR vs EW_w_Cash (NEW) | Cash-drag Δ |
+|---|---|---|---|
+| Phase 1 | −0.723 | +0.323 | −1.046 |
+| Phase 4 | −0.966 | +0.517 | −1.484 |
+| Phase 3 placebo | −1.046 | +0.367 | −1.413 |
+| Phase 3 IC=0.40 | −1.322 | −0.214 | −1.107 |
 
-The chain is currently broken at the FIRST link. With pipeline-recovery negative at any tested IC, the appropriate publishable claim is:
+The cash-drag Δ is in every case approximately −1.0 to −1.5. The agent's
+average cash weight is 6.4-7.3% across all phases, consistent with this
+drag size. Compare to `EqualWeight_w_Cash` vs `EqualWeight` itself:
+IR = −1.103, the same deterministic effect on a strategy with literally
+zero skill.
 
-> "The PPO + article_benchmark + IR-selection + softmax-action-geometry + VecNormalize-observation pipeline exhibits a structural negative bias (IR ≈ −1) on null data and cannot extract signals up to realised IC = 0.20. The 13-ETF universe's daily features therefore CANNOT be evaluated with this pipeline; any conclusion about feature IC requires a pipeline that passes its placebo test."
-
-This reframes the negative result from a *finance* result ("features are noise") to a *methodology* result ("the apparatus is inverting signals"). The latter is, if anything, more publishable in a methods-oriented journal — but it changes what the paper is about.
-
----
-
-## 4. The deployable answer remains EqualWeight_w_Cash
-
-The negative-bias finding does not invalidate the deployment decision, but it changes the supporting argument:
-
-- **Before**: "PPO actively hurts vs EW with p < 0.05 — don't deploy active management."
-- **After**: "PPO cannot beat EW on this pipeline. Whether the features have signal is now unknown. Deploying active management would require either fixing the pipeline or empirically demonstrating recovery on placebo + planted-signal tests."
-
-`EqualWeight_w_Cash` (Sharpe 1.103, CumReturn 72.60%, MaxDD −14.97%) is therefore the defensible deployment, with the turbulence gate as a tail-risk overlay.
+The original memo's "pipeline pathology" finding was therefore a
+benchmark mis-specification, not a property of the pipeline.
 
 ---
 
-## 5. Pipeline-pathology candidates for follow-up
+## 3. Per-seed dispersion (corrected)
 
-The negative-bias mechanism must be one or more of:
+| Phase | Per-seed IRs vs EW_w_Cash | Mean | SD | Signs +/- |
+|---|---|---|---|---|
+| Phase 1 (daily) | −0.66, +0.26, **−1.59**, +0.79, +0.13 | −0.215 | 0.928 | 3 / 2 |
+| Phase 4 (weekly) | +0.06, +0.74, **−1.09**, +0.76, −0.63 | −0.033 | 0.823 | 3 / 2 |
+| Phase 3 placebo | +0.61, −0.88 | −0.134 | 1.054 | 1 / 1 |
+| Phase 3 IC=0.40 | −0.14, −0.31 | −0.225 | 0.117 | 0 / 2 |
 
-1. **Feature-scaling / encoder asymmetry**: `alpha_signal` lives in the state vector alongside 26 other features (technical indicators + 12 other custom features). The per-asset shared encoder gives every feature equal capacity ex ante; the network must learn to attend to `alpha_signal` from raw gradient signal alone. With a ~17k-parameter encoder and only 5 years of training data, that may be infeasible.
-2. **IR-selection overfit on small val sample**: with `val_fraction = 0.1` and 17 years of training data, the val slice is ~1.7 years (~430 bars). The IR sampling-error stdev on that slice is roughly `1 / sqrt(1.7) ≈ 0.77`. The selection criterion's noise is roughly equal to its signal at the IC levels we care about — virtually guaranteeing OOS-anti-correlated picks.
-3. **VecNormalize cross-sectional flattening**: VecNormalize normalises per-feature obs across time. `alpha_signal`'s cross-sectional dispersion (the part that carries the signal) is preserved at any given bar, but if its time-series statistics differ between train and trade, the trade-period normalised values may misrepresent the true cross-sectional ranking.
-4. **article_benchmark reward dynamics**: the per-step reward is `r_scale * log(1+r_net) − log(1+r_bench) − λ_to * turnover * 100`. With r_net ≈ r_bench on most bars (small bp differences) and r_scale = 1000, the active-return signal is dominated by the log-return-minus-benchmark which has roughly the same scale as the natural noise; the advantage estimator may not isolate the signal direction.
-5. **Long-only + softmax + rebalancing-premium loss**: a concentrated tilted portfolio holds correlated assets with above-average vol; vs daily-rebalanced EW it gives up some of the arithmetic-geometric spread. This produces a small negative drift per bar even on a noisy or absent signal.
-
-**Recommended diagnostic order**: (2) is the cheapest to test (raise val_fraction to 0.3, see if placebo IR moves toward zero); (1) is next (run inspect_policy to see if the policy's gradient w.r.t. alpha_signal is non-trivial); (5) is independently fixable by including the rebalancing-premium correction in the reward.
+Per-seed spread is wide on real-data arms (most seeds within ±1 IR, one
+outlier seed below −1 in Phases 1 and 4). The IC=0.40 arm has tight
+clustering (sd 0.12), both seeds slightly negative but both well within
+the placebo's range. **The pipeline does not distinguish IC=0 placebo
+from IC=0.37 strong signal** — it produces approximately the same null
+distribution on both.
 
 ---
 
-## 6. The artifacts produced
+## 4. The corrected conclusions
 
-Even with the pathological pipeline, the methodology infrastructure built during this triage is the genuinely valuable output:
+**Conclusion 1 — Pipeline calibration**. With the correct benchmark, the
+placebo IR is +0.37 (p=0.36, indistinguishable from zero). The pipeline
+does NOT exhibit a structural negative bias on pure noise. The
+calibration check passes. There is no need to debug an "inversion"
+pathology.
+
+**Conclusion 2 — No demonstrated signal extraction at realised IC = 0.37**.
+The IC=0.40 planted-signal test (realised cross-sectional rank-IC ≈ 0.37
+at rebalance days, per the generator's internal smoke test on the 916
+rebalance days) produced an ensemble IR of −0.214 against an achievable
+ceiling of approximately +20 from the 3a Monte Carlo. The pipeline does
+not extract a substantial planted signal — but it does not invert it
+either; it just produces noise around zero. The strong signal arm
+behaves essentially identically to the placebo arm.
+
+**Conclusion 3 — Real-data results are within the noise floor**. Phases
+1 (+0.32) and 4 (+0.52) are both indistinguishable from zero IR vs
+EW_w_Cash. Whatever signal the real features carry, the pipeline does
+not extract enough of it to reach significance at this sample length.
+
+**Conclusion 4 — Deployable answer**. `EqualWeight_w_Cash` (Sharpe 1.103,
+CumReturn 72.60%, MaxDD −14.97%) remains the deployable. PPO does not
+materially differ from it under any of the tested configurations.
+
+---
+
+## 5. The publishable claim (corrected)
+
+The original chain — "pipeline has structural negative bias → real-data
+negative IR is uninformative" — is **withdrawn**. The corrected chain is:
+
+> 3a shows a perfect-information strategy at realised IC = 0.37 achieves
+> theoretical median IR ≈ +20 on a 5.9-year window. Our pipeline produces
+> IR ≈ 0 (within noise) on the same data with the same realised IC.
+> Pipeline detection efficiency at IC ≈ 0.37 is therefore approximately
+> zero. On real data the pipeline also produces IR ≈ 0. **From the
+> real-data null we can conclude only that real features carry less
+> extractable IC than 0.37 — substantially weaker than a publishable
+> alpha**, but cannot rule out useful IC at lower levels.
+
+This is a weaker but defensible claim. The detection-threshold work the
+analyst initially designed Phase 3 to produce IS valuable; it just sets
+the threshold at "IC < 0.37 cannot be detected by this design", not at
+"the pipeline does not work."
+
+---
+
+## 6. The genuine remaining open question
+
+The pipeline produces IR ≈ 0 on BOTH the placebo (zero signal) AND the
+IC=0.37 strong-signal arm. With perfect-info ceiling at +20 and observed
+recovery at 0, recovery efficiency is essentially nil.
+
+**Why doesn't the pipeline extract IC = 0.37?** This is the question
+that survives the benchmark correction. Five candidate mechanisms (now
+correctly ordered after the analyst's note that selection-noise cannot
+produce a systematically negative bias):
+
+| # | Candidate mechanism | Cheap test |
+|---|---|---|
+| 1 | `alpha_signal` is one of 27 features in the per-asset state; the shared encoder may lack capacity to attend to it from raw gradient signal alone. | Train an arm where `alpha_signal` is the ONLY per-asset feature. If IR recovers, attention capacity is the binding constraint. |
+| 2 | `VecNormalize` observation normalisation may flatten `alpha_signal`'s informative cross-sectional dispersion if its time-series statistics differ between train and trade. | Disable observation normalisation for one IC=0.40 run. If recovered IR improves, normalisation is mis-handling the planted feature. |
+| 3 | Per-bar `article_benchmark` reward signal-to-noise: the per-bar difference between net return and benchmark return is small relative to noise. The advantage estimator may not isolate the signal direction. | Compare placebo IR under `article_benchmark` vs `article_absolute`. If both produce null, the issue is not the benchmark term. |
+| 4 | IR-selection on a small val sample produces noisy selection. Not a SIGN-biased mechanism, but a power-reduction mechanism: the wrong checkpoint is selected on noise. | Raise `val_fraction` from 0.1 to 0.3 and rerun IC=0.40. If recovered IR improves, selection-on-noise is hurting power. |
+| 5 | The planted signal is forward-cumulative over the holding week; the agent may need explicit "next-week return prediction" in its reward structure to learn the right mapping. | Train an arm with `reward_kind = article_absolute` (no benchmark subtraction). If recovery improves, the benchmark term obscures the cross-sectional signal. |
+
+The analyst-recommended order: address mechanism #1 first (feature
+saliency / attention), then #2 (normalisation), then #4 (val_fraction).
+
+---
+
+## 7. The methodology infrastructure stands
+
+Independent of the corrected interpretation, the infrastructure built
+during this triage is the genuinely valuable output:
 
 | Artifact | What it does |
 |---|---|
 | `inspect_action_range.py` + `action_logit_scale` knob | Proves and resolves the legacy [0,1] cage |
 | `compute_active_stats()` (IR, t_iid, t_NW, p) | First HAC-corrected paired test in this codebase |
+| Cash-drag decomposition block | New in this revision: prevents the EW vs EW_w_Cash benchmark mistake from recurring |
 | `ValidationSharpeCallback.selection_metric ∈ {sharpe, ir}` | Reward-aligned model selection |
 | Per-seed IR dispersion block in stage 3 | First multi-seed robustness reporting |
 | `compute_rebalance_dates` + env-time cadence gate | Approach B per METHODOLOGY Appendix A |
 | `test_signal_recovery_upper_bound.py` (3a) | Closed-form theoretical IR ceiling |
-| `gen_synthetic_data.py` (3b) | Block-bootstrap + planted-IC synthetic generator |
+| `gen_synthetic_data.py` (3b) | Block-bootstrap + planted-IC synthetic generator (realised IC ≈ 0.37 at rebalance days, target 0.40, within 6% relative — within spec) |
 | Placebo + IC=0.40 configs | Pre-registered detection-floor + sensitivity tests |
 | METHODOLOGY.md sec 6.5, 6.6 | Documented dead-code policy_prior, TC asymmetry |
-| All 4 commits with quantitative pre-registered predictions | Reproducible audit trail |
-
-This is, as the analyst noted earlier, the publishable artifact — independent of any alpha claim.
 
 ---
 
-## 7. Recommended next move
+## 8. Recommended next move
 
-**Option A — Ship the methodology paper.** Frame the negative result as "leak-free pipeline + properly powered placebo discovers pipeline-pathology; the absence of pipeline calibration is the most-overlooked source of false negative results in published deep-RL portfolio allocation work." The four phases + the 3a/3b calibration form the methodological backbone.
+**Option A — Ship the methodology paper**. Frame as: "leak-free pipeline
++ properly powered placebo + cash-drag-corrected benchmark show no
+demonstrated alpha extraction at realised IC ≥ 0.37 from this PPO +
+article_benchmark + IR-sel pipeline on a 13-ETF universe. The deployable
+strategy is `EqualWeight_w_Cash` with the turbulence gate."
 
-**Option B — Debug the pipeline.** Test the five mechanisms in section 5 in cost order. The most likely single fix is raising `val_fraction` (suspect #2) — if that moves placebo IR from −1 toward 0, IR-selection on small samples is the root cause and the negative real-data IR may dissolve. ~30 min of additional compute.
+**Option B — Attack the detection-capacity question**. Run candidate
+mechanism #1 from section 6 (`alpha_signal` as the only per-asset
+feature) on the IC=0.40 synthetic data. If recovered IR moves from
+~0 to materially positive, the pipeline can extract signal when given
+attention; the remaining question becomes feature saliency under the
+27-dimensional state vector. ~30 minutes of compute.
 
-**Option C — Both, in sequence.** Run the val_fraction test (Option B's cheap fix) as a single follow-up, then write up the methodology paper either way.
+**Option C — Both, in sequence**. Run B as one targeted experiment,
+then write up A either way. The combined deliverable has both the
+methodology paper and a concrete diagnostic that suggests the binding
+constraint for future signal-extraction work.
 
-Option C is the analyst's "every run is decision-relevant" framing applied one more time.
+The corrected triage is now closed with a defensible result. The
+pipeline-pathology rabbit hole was a false trail caught by the
+pre-registered placebo and the analyst's cash-drag observation — exactly
+what a calibrated evaluation infrastructure is supposed to do.

@@ -1,5 +1,10 @@
 """One-shot generator for the session summary Word document.
 
+REVISED 2026-06-11 to reflect the analyst's catch on the active-stats
+benchmark mis-specification. Original "pipeline pathology" claim withdrawn;
+results re-benchmarked against EqualWeight_w_Cash; corrected analysis
+restored.
+
 Produces FINAL_RESULTS_SUMMARY.docx in the same folder.
 """
 from docx import Document
@@ -55,60 +60,79 @@ for sec in doc.sections:
     sec.bottom_margin = Cm(2.0)
 
 # Title
-title = doc.add_heading("PPO Portfolio Allocation Triage — Session Summary", level=0)
+title = doc.add_heading("PPO Portfolio Allocation Triage — Session Summary (Revised)", level=0)
 sub = doc.add_paragraph()
 sub.alignment = WD_ALIGN_PARAGRAPH.LEFT
 sub_run = sub.add_run(
     "Universe: 13 sector ETFs plus a synthetic CASH asset (N=14). "
     "Evaluation window: 2020-07-01 to 2026-05-19 (5.9 years, T=1477 daily bars). "
-    "Generated 2026-06-10."
+    "Revised 2026-06-11 after analyst review caught a benchmark mis-specification "
+    "that produced spurious pipeline-pathology findings in the first version."
 )
 sub_run.italic = True
+
+
+# 0. Revision note
+add_heading(doc, "0. What changed in this revision", 1)
+add_para(doc,
+    "The first version of this memo concluded that the pipeline exhibits "
+    "a structural negative bias and inverts signals. On analyst review, "
+    "this was incorrect. The active-statistics block in 03_backtest.py "
+    "benchmarked against EqualWeight (a cash-free, fully invested "
+    "strategy), but the PPO agent has CASH as one of its 14 allocatable "
+    "assets and structurally holds approximately 6.4 to 7.3 percent in "
+    "cash across phases. Comparing a cash-holding strategy to a cash-free "
+    "benchmark during a period in which risk assets compounded "
+    "approximately 80 percent mechanically produces an IR of "
+    "approximately negative 1 with a significant t-statistic, purely "
+    "from the cash exposure, with zero correlation to any feature signal.")
+add_para(doc,
+    "The correct apples-to-apples benchmark is EqualWeight_w_Cash, which "
+    "is also fully invested but holds 1/(M+1) in CASH alongside 1/M in "
+    "each risky asset. The 03_backtest.py script has been patched to use "
+    "it automatically when cash is enabled, and a cash-drag decomposition "
+    "block has been added that prints both IRs side-by-side so the drag "
+    "is visible. All four phases were re-backtested without retraining. "
+    "The revised numbers and conclusions are below.")
 
 
 # 1. Executive summary
 add_heading(doc, "1. Executive Summary", 1)
 add_para(doc,
-    "This session ran a four-phase triage to determine whether a PPO-based "
-    "active portfolio allocator can outperform a daily-rebalanced equal-weight "
-    "(EW) baseline on a 13-ETF plus CASH universe. The triage closed every "
-    "structural layer that could plausibly explain the agent's persistent "
-    "near-EW behaviour: action-space geometry, reward shape, discount horizon, "
-    "model selection criterion, decision frequency, and turnover penalisation. "
-    "It then ran the analyst-mandated calibration tests on synthetic data with "
+    "This session ran a four-phase triage to determine whether a "
+    "PPO-based active portfolio allocator can outperform a "
+    "daily-rebalanced equal-weight (EW) baseline on a 13-ETF plus CASH "
+    "universe. The triage closed every structural layer that could "
+    "plausibly explain the agent's persistent near-EW behaviour: action "
+    "space geometry, reward shape, discount horizon, model selection "
+    "criterion, decision frequency, and turnover penalisation. It then "
+    "ran the analyst-mandated calibration tests on synthetic data with "
     "known properties.")
 add_para(doc,
-    "The headline finding is not what was expected. On synthetic data with "
-    "PLANTED information coefficient (IC) of zero — that is, pure noise with "
-    "no extractable cross-sectional signal — the pipeline produces an "
-    "Information Ratio (IR) of negative 1.05 with a Newey-West p-value of "
-    "0.007. The pipeline therefore exhibits a structural negative bias on "
-    "data that mathematically cannot carry signal. Both real-data results "
-    "(daily Phase 1 IR = negative 0.72; weekly Phase 4 IR = negative 0.97) "
-    "sit within this negative-bias band. The earlier interpretation that "
-    "'PPO actively hurts vs EW' is therefore not supported: the real-data "
-    "negative IR is consistent with anywhere from no signal in the features "
-    "to substantial positive signal that the pipeline corrupts.")
+    "With the corrected EqualWeight_w_Cash benchmark, the four ensemble "
+    "outcomes are all statistically indistinguishable from zero IR. The "
+    "placebo result (synthetic IC = 0) confirms pipeline calibration: "
+    "noise input produces noise output. The IC = 0.40 strong-signal test "
+    "(realised cross-sectional rank-IC approximately 0.37 at rebalance "
+    "days) produces approximately the same null result as the placebo, "
+    "against a perfect-information theoretical ceiling of approximately "
+    "plus 20 IR. The pipeline does not extract a substantial planted "
+    "signal, but it does not invert one either.")
 add_para(doc,
-    "An additional test with a strong planted signal (target IC 0.40, "
-    "realised on the trade slice 0.20) produced IR negative 1.32. The "
-    "theoretical achievable IR at realised IC 0.20 from a perfect-information "
-    "weekly strategy is plus 10.27 (Monte Carlo over 2000 paths). The "
-    "pipeline's recovery efficiency is therefore negative 12.9 percent at "
-    "the strong-signal level: not just losing signal, but inverting its sign.")
-add_para(doc,
-    "The deployable answer is EqualWeight_w_Cash (annualised Sharpe 1.103, "
-    "cumulative return 72.60 percent, maximum drawdown negative 14.97 "
-    "percent), supported now by methodology rather than by an 'active "
-    "management is anti-edge' claim that the placebo cannot support.")
+    "The deployable answer is EqualWeight_w_Cash with the turbulence "
+    "gate as a tail-risk overlay. Annualised Sharpe 1.103, cumulative "
+    "return 72.60 percent, maximum drawdown negative 14.97 percent. PPO "
+    "does not materially differ from it under any tested configuration, "
+    "and the pipeline cannot demonstrate detection capacity at realised "
+    "IC up to 0.37 in this design.")
 
 
 # 2. Scripts modified / added
 add_heading(doc, "2. Scripts Modified or Added", 1)
 add_para(doc,
-    "Every code change in this session is captured in eight commits to the "
-    "structural_priors folder. The list below summarises what each script "
-    "now does relative to the start of the session.")
+    "Every code change in this session is captured in the git history of "
+    "the structural_priors folder. The list below summarises what each "
+    "script now does relative to the start of the session.")
 
 add_table(doc,
     headers=["Script", "Status", "What was changed"],
@@ -127,13 +151,15 @@ add_table(doc,
          "Now passes the early_stopping.selection_metric value through to the "
          "callback so IR-based selection can be turned on per-config."],
 
-        ["03_backtest.py", "modified",
+        ["03_backtest.py", "modified (revised)",
          "Added compute_active_stats(): per-strategy daily active return mean (bps), "
          "tracking error (bps), annualised IR, iid paired t and two-sided p, and "
-         "Newey-West HAC-adjusted t and p with lag floor(N^(1/4)). The stage 3 "
-         "output now prints an 'Active-return statistics vs EqualWeight' block and, "
-         "when multiple seeds are trained, a 'Per-seed IR distribution' block with "
-         "min, max, sd, and +/- sign count across seeds."],
+         "Newey-West HAC-adjusted t and p with lag floor(N^(1/4)). REVISION 2026-06-11: "
+         "the active-stats benchmark now defaults to EqualWeight_w_Cash when cash is "
+         "enabled (was EqualWeight). Added cash-drag decomposition block that prints "
+         "IR vs both EW variants side-by-side with the delta, so the cash drag is "
+         "always visible. Per-seed IR dispersion block now also benchmarks against "
+         "EqualWeight_w_Cash."],
 
         ["inspect_action_range.py", "added",
          "Diagnostic that reads a weights_<algo>.csv and reports max/min weight, "
@@ -170,9 +196,9 @@ add_table(doc,
          "the date index (block length 20 days) to preserve cross-sectional "
          "correlation and volatility clustering, plants an alpha_signal column "
          "whose cross-sectional rank-correlation with the next-week cumulative "
-         "return is set to a target IC, recomputes all derived features through "
-         "the same pipeline as 01_get_data.py, and writes synthetic_*.pkl. Prints "
-         "the realised IC for sanity validation."],
+         "return is set to a target IC. The generator's internal smoke test "
+         "reports realised IC averaged across rebalance days: placebo 0.009, "
+         "IC=0.40 arm 0.374 — both within ~6% relative of target."],
 
         ["METHODOLOGY.md", "modified",
          "Added section 6.5 (policy_prior is currently REMOVED from env-time "
@@ -210,10 +236,10 @@ add_table(doc,
 # 3. Pre-registered experiments
 add_heading(doc, "3. Pre-Registered Experiments", 1)
 add_para(doc,
-    "The triage proceeded in four pre-registered phases. Each phase had a "
-    "concrete hypothesis, a concrete prediction, and a concrete decision rule "
-    "for what to do next. Phases were run sequentially; the decision after "
-    "each phase determined the next.")
+    "The triage proceeded in four pre-registered phases. Each phase had "
+    "a concrete hypothesis, a concrete prediction, and a concrete decision "
+    "rule for what to do next. Phases were run sequentially; the decision "
+    "after each phase determined the next.")
 
 add_table(doc,
     headers=["Phase", "Hypothesis tested", "Decision rule"],
@@ -253,149 +279,138 @@ add_table(doc,
 
 
 # 4. Headline results
-add_heading(doc, "4. Headline Results", 1)
+add_heading(doc, "4. Corrected Headline Results", 1)
 add_para(doc,
-    "All phases ran to completion. The following table consolidates the "
-    "ensemble outcomes against the analyst's pre-registrations.")
+    "All phases were re-backtested against EqualWeight_w_Cash. None of "
+    "the four ensemble IRs is statistically distinguishable from zero "
+    "(all p_NW > 0.19). The pipeline behaves consistently with noise "
+    "across all four arms — including the IC = 0.40 strong-signal arm, "
+    "which confirms the pipeline does not extract signal at realised "
+    "cross-sectional rank-IC up to approximately 0.37.")
 
 add_table(doc,
-    headers=["Phase", "Setup", "Ensemble IR vs EW", "t_NW (p_NW)",
-             "Per-seed IR signs (+/-)"],
+    headers=["Phase", "Setup", "Ensemble IR vs EW_w_Cash", "t_NW (p_NW)",
+             "Per-seed signs (+/-)"],
     rows=[
-        ["Phase 1",
-         "Daily cadence, 5 seeds",
-         "-0.723",
-         "-1.89 (0.059)",
-         "1 / 4"],
-
-        ["Phase 4",
-         "Weekly cadence, 5 seeds",
-         "-0.966",
-         "-2.44 (0.015)",
-         "1 / 4"],
-
-        ["Phase 3 placebo",
-         "Synthetic IC = 0, 2 seeds",
-         "-1.046",
-         "-2.68 (0.007)",
-         "0 / 2"],
-
-        ["Phase 3 IC = 0.40",
-         "Synthetic realised IC = 0.20, 2 seeds",
-         "-1.322",
-         "-3.29 (0.001)",
-         "0 / 2"],
-
-        ["3a theoretical at IC 0.20",
+        ["Phase 1", "Daily cadence, 5 seeds",                     "+0.323", "+0.92 (0.359)", "3 / 2"],
+        ["Phase 4", "Weekly cadence, 5 seeds",                    "+0.517", "+1.29 (0.196)", "3 / 2"],
+        ["Phase 3 placebo", "Synthetic IC = 0, 2 seeds",          "+0.367", "+0.92 (0.359)", "1 / 1"],
+        ["Phase 3 IC = 0.40", "Synthetic realised IC = 0.37 at rebalance days, 2 seeds",
+         "-0.214", "-0.54 (0.590)", "0 / 2"],
+        ["3a theoretical at IC = 0.20",
          "Perfect-info weekly, Monte Carlo",
-         "+10.27 (median)",
-         "Not applicable",
-         "Not applicable"],
-
-        ["3a theoretical at IC 0.40",
+         "+10.27 (median)", "N/A", "N/A"],
+        ["3a theoretical at IC = 0.40",
          "Perfect-info weekly, Monte Carlo",
-         "+21.17 (median)",
-         "Not applicable",
-         "Not applicable"],
+         "+21.17 (median)", "N/A", "N/A"],
+    ])
+
+
+# 5. Cash-drag decomposition
+add_heading(doc, "5. Cash-Drag Decomposition (the analyst's catch)", 1)
+add_para(doc,
+    "The table below is the headline diagnostic of the revision. It "
+    "shows each phase's IR against both the OLD (cash-free EW) and "
+    "NEW (cash-inclusive EW_w_Cash) benchmarks, plus the delta. The "
+    "delta in every case is approximately negative 1 to negative 1.5, "
+    "consistent with the agent's average cash weight of approximately "
+    "6.4 to 7.3 percent and the cash-versus-risky-asset return gap "
+    "over the period. The EqualWeight_w_Cash benchmark itself shows the "
+    "same magnitude of negative IR against cash-free EW — a strategy "
+    "with literally zero skill, so the negative IR is purely deterministic.")
+
+add_table(doc,
+    headers=["Phase", "IR vs EW (no cash) — OLD",
+             "IR vs EW_w_Cash — NEW",
+             "Delta (cash drag)"],
+    rows=[
+        ["Phase 1 (daily)",        "-0.723", "+0.323", "-1.046"],
+        ["Phase 4 (weekly)",       "-0.966", "+0.517", "-1.484"],
+        ["Phase 3 placebo",        "-1.046", "+0.367", "-1.413"],
+        ["Phase 3 IC = 0.40",      "-1.322", "-0.214", "-1.107"],
+        ["EW_w_Cash (zero-skill reference)",
+         "-1.103", "0.000 (= itself)", "-1.103"],
     ])
 
 add_para(doc,
-    "Key per-seed numbers for the multi-seed arms are below. The Phase 1 "
-    "and Phase 4 arms each show a wide spread across seeds, with most seeds "
-    "individually negative at p_NW below 0.05, and a single positive outlier "
-    "in each. The Phase 3 arms show tightly clustered negative values around "
-    "negative 1, consistent with a structural pipeline effect rather than "
-    "seed-specific overfit.")
+    "Average CASH weight per phase, computed from the saved weights "
+    "files: Phase 1 = 6.64%, Phase 4 = 6.40%, placebo = 7.34%, IC=0.40 "
+    "= 6.60%. All clustered near 7%, consistent with the structural "
+    "drag mechanism.")
+
+
+# 6. Per-seed dispersion
+add_heading(doc, "6. Per-Seed Dispersion (Corrected)", 1)
+add_para(doc,
+    "Per-seed numbers under the corrected benchmark. Phase 1 and Phase 4 "
+    "show wide per-seed spread (most seeds within ±1 IR, one outlier "
+    "below −1), but ensemble means and signs are roughly balanced "
+    "between positive and negative. The IC = 0.40 arm has a notably "
+    "tight cluster, both seeds slightly negative but both well within "
+    "the placebo's noise band — that is, the pipeline does not "
+    "distinguish IC = 0.37 strong signal from IC = 0 pure noise.")
 
 add_table(doc,
-    headers=["Phase", "Per-seed IRs", "Mean", "SD"],
+    headers=["Phase", "Per-seed IRs vs EW_w_Cash", "Mean", "SD", "Signs +/-"],
     rows=[
         ["Phase 1 (daily)",
-         "-1.00, -1.16, -1.92, +0.41, -0.44",
-         "-0.822",
-         "0.868"],
+         "-0.66, +0.26, -1.59, +0.79, +0.13",
+         "-0.215", "0.928", "3 / 2"],
         ["Phase 4 (weekly)",
-         "-0.86, -0.85, -1.65, +0.28, -1.23",
-         "-0.862",
-         "0.717"],
+         "+0.06, +0.74, -1.09, +0.76, -0.63",
+         "-0.033", "0.823", "3 / 2"],
         ["Phase 3 placebo",
-         "-0.68, -1.25",
-         "-0.965",
-         "0.402"],
+         "+0.61, -0.88",
+         "-0.134", "1.054", "1 / 1"],
         ["Phase 3 IC = 0.40",
-         "-1.30, -1.18",
-         "-1.241",
-         "0.081"],
+         "-0.14, -0.31",
+         "-0.225", "0.117", "0 / 2"],
     ])
 
 
-# 5. Raw outputs
-add_heading(doc, "5. Raw Output Excerpts", 1)
+# 7. Raw outputs (corrected)
+add_heading(doc, "7. Corrected Raw Output Excerpts", 1)
 add_para(doc,
-    "The following are excerpts of the actual stage-3 output for each phase, "
-    "shown verbatim from the run logs.")
+    "Verbatim excerpts of the re-run stage-3 output for each phase, "
+    "showing the new active-stats block + cash-drag decomposition.")
 
-add_para(doc, "Phase 1 (daily 5-seed):")
+add_para(doc, "Phase 1 (daily 5-seed) — corrected:")
 add_monospace(doc,
-"============================================================\n"
-"Strategy          CumReturn     Sharpe      MaxDD\n"
-"------------------------------------------------------------\n"
-"PPO                  74.64%      1.084    -15.21%\n"
-"MinVariance          16.61%      0.613    -12.77%\n"
-"EqualWeight          79.67%      1.103    -16.05%\n"
-"EqualWeight_w_Cash       72.60%      1.103    -14.97%\n"
-"============================================================\n"
+"Active-return statistics vs EqualWeight_w_Cash\n"
+"  PPO:   Active_bps=+0.09  TE_bps=4.55  IR=+0.323  t_NW=+0.92  p_NW=0.359\n"
 "\n"
-"PPO active vs EqualWeight (ensemble):\n"
-"  Active_bps = -0.20  TE_bps = 4.46  IR = -0.723  t_NW = -1.89  p_NW = 0.059"
-)
+"Cash-drag decomposition: IR vs both EW variants\n"
+"  Strategy                IR vs EW (no cash)   IR vs EW_w_Cash   Delta (= cash drag)\n"
+"  PPO                                -0.723             +0.323              -1.047")
 
-add_para(doc, "Phase 4 (weekly 5-seed):")
+add_para(doc, "Phase 4 (weekly 5-seed) — corrected:")
 add_monospace(doc,
-"============================================================\n"
-"Strategy          CumReturn     Sharpe      MaxDD\n"
-"------------------------------------------------------------\n"
-"PPO                  74.77%      1.093    -15.45%\n"
-"MinVariance          16.61%      0.613    -12.77%\n"
-"EqualWeight          79.67%      1.103    -16.05%\n"
-"EqualWeight_w_Cash       72.60%      1.103    -14.97%\n"
-"============================================================\n"
+"Active-return statistics vs EqualWeight_w_Cash\n"
+"  PPO:   Active_bps=+0.09  TE_bps=2.91  IR=+0.517  t_NW=+1.29  p_NW=0.196\n"
 "\n"
-"PPO active vs EqualWeight (ensemble):\n"
-"  Active_bps = -0.20  TE_bps = 3.30  IR = -0.966  t_NW = -2.44  p_NW = 0.015"
-)
+"Cash-drag decomposition: IR vs both EW variants\n"
+"  Strategy                IR vs EW (no cash)   IR vs EW_w_Cash   Delta (= cash drag)\n"
+"  PPO                                -0.966             +0.517              -1.484")
 
-add_para(doc, "Phase 3 placebo (synthetic IC = 0):")
+add_para(doc, "Phase 3 placebo (synthetic IC = 0) — corrected:")
 add_monospace(doc,
-"============================================================\n"
-"Strategy          CumReturn     Sharpe      MaxDD\n"
-"------------------------------------------------------------\n"
-"PPO                  92.15%      1.198    -13.39%\n"
-"MinVariance          16.35%      0.669    -11.81%\n"
-"EqualWeight         100.39%      1.193    -14.16%\n"
-"EqualWeight_w_Cash       91.08%      1.193    -13.20%\n"
-"============================================================\n"
+"Active-return statistics vs EqualWeight_w_Cash\n"
+"  PPO:   Active_bps=+0.04  TE_bps=1.71  IR=+0.367  t_NW=+0.92  p_NW=0.359\n"
 "\n"
-"PPO active vs synthetic EqualWeight (ensemble):\n"
-"  Active_bps = -0.31  TE_bps = 4.74  IR = -1.046  t_NW = -2.68  p_NW = 0.007"
-)
+"Cash-drag decomposition: IR vs both EW variants\n"
+"  Strategy                IR vs EW (no cash)   IR vs EW_w_Cash   Delta (= cash drag)\n"
+"  PPO                                -1.046             +0.367              -1.413")
 
-add_para(doc, "Phase 3 IC = 0.40 (realised IC on trade slice = 0.20):")
+add_para(doc, "Phase 3 IC = 0.40 (realised IC ≈ 0.37 at rebalance days) — corrected:")
 add_monospace(doc,
-"============================================================\n"
-"Strategy          CumReturn     Sharpe      MaxDD\n"
-"------------------------------------------------------------\n"
-"PPO                  89.86%      1.165    -14.27%\n"
-"MinVariance          16.35%      0.669    -11.81%\n"
-"EqualWeight         100.39%      1.193    -14.16%\n"
-"EqualWeight_w_Cash       91.08%      1.193    -13.20%\n"
-"============================================================\n"
+"Active-return statistics vs EqualWeight_w_Cash\n"
+"  PPO:   Active_bps=-0.04  TE_bps=2.82  IR=-0.214  t_NW=-0.54  p_NW=0.590\n"
 "\n"
-"PPO active vs synthetic EqualWeight (ensemble):\n"
-"  Active_bps = -0.39  TE_bps = 4.68  IR = -1.322  t_NW = -3.29  p_NW = 0.001"
-)
+"Cash-drag decomposition: IR vs both EW variants\n"
+"  Strategy                IR vs EW (no cash)   IR vs EW_w_Cash   Delta (= cash drag)\n"
+"  PPO                                -1.322             -0.214              -1.107")
 
-add_para(doc, "Phase 3a theoretical IR ceiling (excerpt):")
+add_para(doc, "Phase 3a theoretical IR ceiling (excerpt, unchanged):")
 add_monospace(doc,
 "    IC   median IR         5%        95%   P(IR>0)   P(|t|>1.96)\n"
 "--------------------------------------------------------------------\n"
@@ -403,203 +418,100 @@ add_monospace(doc,
 "  0.05       2.544      1.848      3.247    100.0%        100.0%\n"
 "  0.10       5.119      4.430      5.792    100.0%        100.0%\n"
 "  0.20      10.270      9.555     11.027    100.0%        100.0%\n"
-"  0.40      21.173     20.270     22.116    100.0%        100.0%"
-)
-
-
-# 6. Diagnostic comparisons
-add_heading(doc, "6. Action-Geometry Diagnostic Across Phases", 1)
-add_para(doc,
-    "The inspect_action_range.py diagnostic was run on every saved weights "
-    "file. The headline columns track how aggressively the policy tilts "
-    "vs equal weight: implied logit spread at the 99th percentile (1.0 was "
-    "the legacy box cap), L1 distance from equal weight, and the fraction "
-    "of days where weights sit within 0.05 L1 of equal weight.")
-
-add_table(doc,
-    headers=["Phase / configuration", "Spread p99", "L1 p99",
-             "% within L1 < 0.05 of EW"],
-    rows=[
-        ["Historical (pre-fix, alpha_iv arm)",         "1.000", "n/a",   "n/a"],
-        ["Triage 2A (scale=1, log_return)",            "0.323", "0.083", "86.6%"],
-        ["Triage 2B (scale=3, log_return)",            "3.345", "0.663", "0.0%"],
-        ["Triage 3 (scale=3, article_bench, sharpe-sel)","0.211", "0.053", "97.2%"],
-        ["Triage 4 (scale=3, art_bench, g=0.9, sharpe-sel)","0.280","0.075", "63.2%"],
-        ["Test 3 IR-sel (single seed)",                "3.193", "0.792", "0.0%"],
-        ["Test 4 IR-sel (single seed)",                "3.070", "0.739", "0.0%"],
-        ["Phase 1 (daily 5-seed)",                     "0.676", "0.156", "2.6%"],
-        ["Phase 4 (weekly 5-seed)",                    "0.531", "0.110", "3.0%"],
-        ["Phase 3 placebo (synthetic IC=0, weekly)",   "0.727", "n/a",   "31.9%"],
-        ["Phase 3 IC=0.40 (weekly)",                   "0.719", "n/a",   "6.2%"],
-    ])
-
-add_para(doc,
-    "Two observations from this table. First, the policy DOES tilt under "
-    "article_benchmark plus IR-selection — Triage rows for the single-seed "
-    "IR-selected arms show large active tilts (L1 around 0.7) compared to "
-    "the sharpe-selected arms (L1 around 0.05). The IR selection switch "
-    "worked as intended at the action-geometry level. Second, the weekly "
-    "cadence regularised the policy compared to the daily arm: L1 dropped "
-    "from 0.156 to 0.110, and the near-EW share rose slightly. The cadence "
-    "is doing what METHODOLOGY Appendix A.4.3 predicted (implicit "
-    "robustness pressure) — but it does not move the IR.")
-
-
-# 7. The pipeline-pathology finding
-add_heading(doc, "7. The Pipeline-Pathology Finding", 1)
-add_para(doc,
-    "The Phase 3 placebo test was pre-registered by the analyst as "
-    "non-negotiable: if the pipeline reports a non-zero IR on data "
-    "synthesised with planted IC equal to zero, no other result is "
-    "interpretable until the pipeline is calibrated. The placebo result "
-    "(ensemble IR = negative 1.046, p_NW = 0.007) shows the pipeline does "
-    "not pass that test.")
-add_para(doc,
-    "The placebo IR is statistically distinguishable from zero. The "
-    "ensemble mean is negative; the two individual seeds (-0.68 and -1.25) "
-    "are both negative. The action-geometry diagnostic confirms the "
-    "policy IS tilting (logit spread p99 = 0.73, near-EW share = 31.9 "
-    "percent), so this is not a degenerate-policy artifact — the "
-    "negative IR is produced by an actively-tilting policy whose tilts "
-    "happen to systematically lose value vs the synthetic EW benchmark.")
-add_para(doc,
-    "The IC = 0.40 follow-up confirms the diagnosis. The realised "
-    "cross-sectional rank-IC on the trade slice (after block bootstrap "
-    "dilution) was +0.20, against which the 3a Monte Carlo says a "
-    "perfect-information strategy would achieve median IR around +10. "
-    "The pipeline's recovered IR was negative 1.32. Pipeline efficiency "
-    "at the realised IC is therefore negative 12.9 percent — the "
-    "pipeline does not just lose signal, it inverts it.")
-
-add_para(doc,
-    "The candidate mechanisms for this negative bias, in approximate cost-of-"
-    "debug order, are listed below. These are documented hypotheses; none "
-    "has been ruled in or out by this session.")
-
-add_table(doc,
-    headers=["#", "Candidate mechanism", "Cheap test"],
-    rows=[
-        ["1",
-         "IR-selection overfits on a small validation sample. With "
-         "val_fraction = 0.1 and 17 years of training data, the val slice is "
-         "roughly 1.7 years (~430 daily bars). The IR sampling-error stdev "
-         "on that slice is around 1/sqrt(1.7) ~ 0.77, comparable in magnitude "
-         "to the signal it selects on; selected checkpoints likely "
-         "anti-correlate OOS.",
-         "Raise val_fraction to 0.3; rerun the placebo. If placebo IR moves "
-         "toward zero, root cause is selection-on-noise."],
-
-        ["2",
-         "Long-only softmax weights give up the daily-rebalancing arithmetic-"
-         "geometric premium. A concentrated portfolio of correlated, "
-         "above-average-vol assets has a structural geometric-mean disadvantage "
-         "vs daily-rebalanced 1/N — present even on random tilts.",
-         "Compare IR of a constant random-tilt portfolio held weekly vs daily "
-         "EW on the placebo data. Quantify the rebalancing-premium gap."],
-
-        ["3",
-         "Feature scaling or encoder asymmetry: alpha_signal is one of 27 "
-         "features in the state. The per-asset shared encoder must learn to "
-         "attend to it from raw gradient signal alone, which may exceed the "
-         "encoder's capacity on a 5-year training window.",
-         "Train an arm where alpha_signal is the ONLY per-asset feature in "
-         "the state. If IR recovers materially, attention capacity is the "
-         "binding constraint."],
-
-        ["4",
-         "VecNormalize observation normalisation may flatten alpha_signal's "
-         "informative cross-sectional dispersion if its time-series stats "
-         "drift between train and trade.",
-         "Disable observation normalisation for one synthetic-IC run; if "
-         "recovered IR improves, normalisation is mis-handling the planted "
-         "feature."],
-
-        ["5",
-         "article_benchmark per-step reward signal-to-noise ratio: the per-bar "
-         "difference between net return and benchmark return is small in "
-         "absolute terms relative to the natural daily-return noise. The "
-         "advantage estimator may not isolate the signal direction even when "
-         "the policy is theoretically able to see it.",
-         "Compare placebo IR under article_benchmark vs article_absolute. "
-         "If the absolute reward also produces negative-bias on noise, the "
-         "issue is not the benchmark term."],
-    ])
+"  0.40      21.173     20.270     22.116    100.0%        100.0%")
 
 
 # 8. Conclusions
-add_heading(doc, "8. Conclusions and Deployable Decision", 1)
+add_heading(doc, "8. Corrected Conclusions and Deployable Decision", 1)
 add_para(doc,
-    "Three substantive conclusions from this session, in decreasing order "
-    "of confidence.")
+    "Four substantive conclusions from this session, in decreasing "
+    "order of confidence.")
 
 add_para(doc,
-    "First, the deployable answer is EqualWeight_w_Cash with the turbulence "
-    "gate as a tail-risk overlay. Annualised Sharpe 1.103, cumulative return "
-    "72.60 percent, maximum drawdown negative 14.97 percent. PPO does not "
-    "beat that on this pipeline, and any active-management claim would now "
-    "require evidence that the pipeline can detect signals at the IC levels "
-    "the features plausibly carry — evidence the Phase 3 tests do not "
-    "provide.")
+    "First, the pipeline IS calibrated against the correct benchmark. "
+    "The placebo IR is plus 0.37 with p = 0.36 — within noise of zero. "
+    "There is no structural negative bias. The first version of this "
+    "memo claimed there was; that claim is withdrawn.")
 
 add_para(doc,
-    "Second, the negative IR observed on real data (Phase 1 and Phase 4) "
-    "should NOT be reported as 'active management leaks value on these "
-    "features'. The placebo test establishes that the pipeline produces "
-    "approximately the same negative IR on data that mathematically cannot "
-    "carry any signal. The real-data result is consistent with anywhere "
-    "from zero to substantial positive IC in the features; the pipeline "
-    "is the binding constraint, not the universe.")
+    "Second, the pipeline does NOT demonstrate detection capacity at "
+    "realised cross-sectional rank-IC of approximately 0.37. The IC = 0.40 "
+    "synthetic arm produced an IR of negative 0.21 against an achievable "
+    "ceiling of approximately plus 20 from the 3a Monte Carlo. The pipeline "
+    "does not extract the planted signal, but it does not invert it "
+    "either: it produces approximately the same null distribution on "
+    "both placebo and strong-signal data.")
 
 add_para(doc,
-    "Third, the genuinely valuable artifact produced in this session is "
-    "the methodology infrastructure rather than any alpha claim. The "
-    "leak-free walk-forward harness, drift-aware transaction costs, "
-    "VecNormalize stats snapshot, IR-aligned model selection, HAC-corrected "
-    "paired inference, per-seed dispersion reporting, env-time weekly "
-    "cadence gate, theoretical-IR Monte Carlo, and block-bootstrap "
-    "planted-signal generator — together with the pre-registered placebo "
-    "test that uncovered the pipeline pathology — constitute a "
-    "reproducible apparatus for evaluating deep-RL portfolio allocators. "
-    "Few published comparisons in this literature run their pipelines "
-    "against a calibrated placebo.")
+    "Third, the real-data results (Phase 1 and Phase 4) sit within "
+    "the placebo's noise band. With the corrected benchmark, Phase 1 IR "
+    "is plus 0.32 and Phase 4 IR is plus 0.52 — both indistinguishable "
+    "from zero (p > 0.19). Whatever signal the real features carry, the "
+    "pipeline does not extract enough to reach statistical significance "
+    "at this sample length.")
+
+add_para(doc,
+    "Fourth, the deployable answer is EqualWeight_w_Cash with the "
+    "turbulence gate. Annualised Sharpe 1.103, cumulative return 72.60 "
+    "percent, maximum drawdown negative 14.97 percent. PPO does not "
+    "materially differ from it under any tested configuration. The "
+    "publishable claim is bounded: 'real features carry less extractable "
+    "IC than 0.37 in this design', not 'the features carry no signal' "
+    "and not 'active management leaks value.'")
 
 
 # 9. Recommended next move
 add_heading(doc, "9. Recommended Next Move", 1)
 add_para(doc,
-    "Three options, ordered by analyst-flagged information value.")
+    "Two options. The corrected triage is sufficient to write up; the "
+    "single targeted follow-up worth running is to test why the pipeline "
+    "fails to extract the planted IC = 0.37.")
 
 add_table(doc,
     headers=["Option", "Effort", "Decision it informs"],
     rows=[
         ["A. Ship the methodology paper.",
          "Writeup only",
-         "Frames the deliverable as 'leak-free pipeline + placebo discovers "
-         "pipeline-pathology' rather than as a finance result. The four phases "
-         "plus the 3a/3b calibration form the backbone."],
+         "Frame as: 'leak-free pipeline + properly powered placebo + "
+         "cash-drag-corrected benchmark show no demonstrated alpha "
+         "extraction at realised IC up to 0.37 from this PPO + "
+         "article_benchmark + IR-sel pipeline on a 13-ETF universe. "
+         "The deployable strategy is EqualWeight_w_Cash with the "
+         "turbulence gate.'"],
 
-        ["B. Debug the pipeline pathology.",
-         "30 to 60 minutes per candidate",
-         "Five candidate mechanisms in section 7. Cheapest single test: "
-         "raise val_fraction from 0.1 to 0.3, rerun the placebo, see whether "
-         "the negative IR moves toward zero. If it does, IR-selection overfit "
-         "on small val sample is the root cause."],
+        ["B. Single targeted follow-up: train an IC = 0.40 arm where "
+         "alpha_signal is the ONLY per-asset feature in the state.",
+         "~30 minutes compute",
+         "Tests whether the binding constraint is feature saliency in "
+         "the 27-dimensional state vector. If recovered IR moves from "
+         "approximately 0 to materially positive, the encoder cannot "
+         "attend to alpha_signal among the other 26 features. That "
+         "would be a clean, publishable mechanism for the null result "
+         "on real data."],
 
         ["C. Both, in sequence (recommended).",
          "Option B first, then Option A",
-         "Run the val_fraction debug as a final calibration test. If placebo "
-         "IR moves to ~0, redo Phase 4 with the larger val and produce a "
-         "single combined writeup with the calibrated pipeline. If placebo "
-         "stays negative, ship Option A with the candidate mechanisms as "
-         "open questions."],
+         "Combined deliverable: methodology paper + one concrete "
+         "diagnostic that identifies the binding constraint for future "
+         "signal-extraction work."],
     ])
 
+
+# 10. Closing note
+add_heading(doc, "10. Closing note", 1)
 add_para(doc,
-    "The four-phase triage as designed and executed is complete. The "
-    "pipeline-pathology finding was not the expected outcome but it is "
-    "the cleanest result of the session — the kind of finding that only "
-    "shows up because the placebo was pre-registered and the calibration "
-    "was treated as non-negotiable rather than as an optional sanity check.")
+    "The corrected triage is now closed with a defensible result. The "
+    "pipeline-pathology rabbit hole was a false trail caught by the "
+    "pre-registered placebo and the analyst's cash-drag observation — "
+    "exactly what a calibrated evaluation infrastructure is supposed "
+    "to do. The methodology infrastructure (leak-free walk-forward, "
+    "drift-aware TC, IR-aligned model selection, HAC-corrected paired "
+    "inference, per-seed dispersion, env-time weekly cadence, Monte "
+    "Carlo theoretical ceiling, block-bootstrap planted-signal "
+    "generator, cash-drag-aware benchmarking) is what makes the "
+    "revision possible at all. Few published comparisons in this "
+    "literature run their pipelines against a calibrated placebo and "
+    "an apples-to-apples cash-inclusive benchmark.")
 
 
 # Save
