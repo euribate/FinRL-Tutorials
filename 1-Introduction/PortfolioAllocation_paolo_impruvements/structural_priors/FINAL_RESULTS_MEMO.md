@@ -40,16 +40,23 @@ are below.
 
 | Phase | Setup | Ensemble IR vs EW_w_Cash (corrected) | t_NW (p_NW) | Per-seed signs (+/-) |
 |---|---|---|---|---|
-| **Phase 1** | Daily cadence, 5 seeds | **+0.323** | +0.92 (0.359) | 3 / 2 |
-| **Phase 4** | Weekly cadence, 5 seeds | **+0.517** | +1.29 (0.196) | 3 / 2 |
-| **Phase 3 placebo** | Synthetic IC=0, 2 seeds | **+0.367** | +0.92 (0.359) | 1 / 1 |
-| **Phase 3 IC=0.40** | Synthetic realised IC≈0.37 at rebalance days, 2 seeds | **−0.214** | −0.54 (0.590) | 0 / 2 |
+| **Phase 1** | Daily cadence, 5 seeds | **+0.323** | +0.918 (0.359) | 3 / 2 |
+| **Phase 4** | Weekly cadence, 5 seeds | **+0.517** | +1.292 (0.196) | 3 / 2 |
+| **Phase 3 placebo** | Synthetic IC=0, 2 seeds | **+0.367** | +0.917 (0.359) | 1 / 1 |
+| **Phase 3 IC=0.40** | Synthetic realised IC≈0.37 at rebalance days, 2 seeds | **−0.214** | −0.539 (0.590) | 0 / 2 |
 | 3a theoretical at IC=0.20 | Perfect-info weekly, MC | +10.27 (median) | — | — |
 | 3a theoretical at IC=0.40 | Perfect-info weekly, MC | +21.17 (median) | — | — |
 
 **None of the four observed ensemble IRs is statistically distinguishable
 from zero** (all p_NW > 0.19). The pipeline behaves consistently with
 noise on all four arms.
+
+The t_NW values for Phase 1 and the placebo (0.918 and 0.917) coincide
+to two decimals — that is a numerical coincidence, not a transcription
+error: they correspond to different IRs (+0.323 vs +0.367) and different
+TEs (4.55 vs 1.71 bps/day), with the Newey-West SE landing at
+proportionally different values that produce nearly identical
+t-statistics. p-values agree to three decimals as a knock-on.
 
 ---
 
@@ -70,6 +77,13 @@ average cash weight is 6.4-7.3% across all phases, consistent with this
 drag size. Compare to `EqualWeight_w_Cash` vs `EqualWeight` itself:
 IR = −1.103, the same deterministic effect on a strategy with literally
 zero skill.
+
+Phase 4's drag delta of −1.484 is larger than the zero-skill EW_w_Cash
+reference of −1.103. The excess of approximately −0.38 IR is not cash
+drag — it is the TC plus variance drag induced by the policy's tilts.
+PPO's tilted positions have higher concentration than 1/(M+1) and pay
+turnover cost on each rebalance day; both effects compound to a small
+additional negative IR vs cash-free EW that EW_w_Cash does not pay.
 
 The original memo's "pipeline pathology" finding was therefore a
 benchmark mis-specification, not a property of the pipeline.
@@ -111,10 +125,27 @@ not extract a substantial planted signal — but it does not invert it
 either; it just produces noise around zero. The strong signal arm
 behaves essentially identically to the placebo arm.
 
-**Conclusion 3 — Real-data results are within the noise floor**. Phases
-1 (+0.32) and 4 (+0.52) are both indistinguishable from zero IR vs
-EW_w_Cash. Whatever signal the real features carry, the pipeline does
-not extract enough of it to reach significance at this sample length.
+**Caveat on Conclusion 2**: this finding rests on **two seeds of a single
+block-bootstrap draw**. It is directionally credible — a perfect-info
+ceiling of approximately +20 IR missed entirely down to ~0 is hard to
+explain by seed luck alone or by bootstrap-draw-specific structure —
+but a fully powered claim would need a second bootstrap draw and a
+larger seed pool. The recommended Option B (alpha_signal as the only
+per-asset feature, ~30 min compute) is precisely the cheap test that
+converts "no detection observed" into a mechanism: feature-saliency
+loss in the 27-dimensional state vector.
+
+**Conclusion 3 — Real-data results are uninformative about feature IC**.
+Phases 1 (+0.32) and 4 (+0.52) are both indistinguishable from zero IR
+vs EW_w_Cash. Critically, **this does NOT bound the IC content of the
+real features.** The IC=0.40 result establishes that this pipeline
+produces approximately the same null distribution whether the data
+carries planted IC = 0 or planted IC = 0.37. Real features could carry
+IC = 0.5 and this pipeline would still report IR ≈ 0. The defensible
+claim is about the apparatus, not the features: *this pipeline extracts
+no alpha from these features on the tested arms, and its demonstrated
+detection capacity is below realised IC ≈ 0.37; real-feature IC content
+remains unmeasured by this design.*
 
 **Conclusion 4 — Deployable answer**. `EqualWeight_w_Cash` (Sharpe 1.103,
 CumReturn 72.60%, MaxDD −14.97%) remains the deployable. PPO does not
@@ -125,21 +156,27 @@ materially differ from it under any of the tested configurations.
 ## 5. The publishable claim (corrected)
 
 The original chain — "pipeline has structural negative bias → real-data
-negative IR is uninformative" — is **withdrawn**. The corrected chain is:
+negative IR is uninformative" — is **withdrawn**. The corrected
+publishable claim is about the apparatus, not the features:
 
-> 3a shows a perfect-information strategy at realised IC = 0.37 achieves
-> theoretical median IR ≈ +20 on a 5.9-year window. Our pipeline produces
-> IR ≈ 0 (within noise) on the same data with the same realised IC.
-> Pipeline detection efficiency at IC ≈ 0.37 is therefore approximately
-> zero. On real data the pipeline also produces IR ≈ 0. **From the
-> real-data null we can conclude only that real features carry less
-> extractable IC than 0.37 — substantially weaker than a publishable
-> alpha**, but cannot rule out useful IC at lower levels.
+> **3a** shows a perfect-information strategy at realised IC = 0.37
+> achieves theoretical median IR ≈ +20 on a 5.9-year window. **3b** shows
+> our pipeline produces IR ≈ 0 on the same data with the same realised
+> IC — that is, the pipeline's demonstrated detection capacity is below
+> realised IC ≈ 0.37 (subject to the 2-seed-1-bootstrap caveat above).
+> **On real data** the pipeline also produces IR ≈ 0. **We cannot
+> conclude anything about real-feature IC content from these results**:
+> a pipeline that returns the null distribution on planted IC = 0.37 also
+> returns the null distribution on hypothetical IC = 0.5 — the
+> apparatus's output is uninformative about its input above its
+> detection floor.
 
-This is a weaker but defensible claim. The detection-threshold work the
-analyst initially designed Phase 3 to produce IS valuable; it just sets
-the threshold at "IC < 0.37 cannot be detected by this design", not at
-"the pipeline does not work."
+The defensible negative claim is: *this pipeline does not extract alpha
+from these features on the tested configurations.* The defensible
+positive contribution is the apparatus itself, plus the demonstration
+that pre-registered placebo + perfect-info ceiling reveals
+apparatus-pathology vs feature-pathology — a distinction the literature
+routinely conflates.
 
 ---
 
@@ -190,24 +227,29 @@ during this triage is the genuinely valuable output:
 ## 8. Recommended next move
 
 **Option A — Ship the methodology paper**. Frame as: "leak-free pipeline
-+ properly powered placebo + cash-drag-corrected benchmark show no
-demonstrated alpha extraction at realised IC ≥ 0.37 from this PPO +
-article_benchmark + IR-sel pipeline on a 13-ETF universe. The deployable
-strategy is `EqualWeight_w_Cash` with the turbulence gate."
++ properly powered placebo + cash-drag-corrected benchmark show this
+PPO + article_benchmark + IR-sel pipeline does not extract alpha from a
+13-ETF universe AND has demonstrated detection capacity below realised
+IC ≈ 0.37 (subject to a 2-seed-1-bootstrap caveat). Real-feature IC
+content is therefore unmeasured. The deployable strategy is
+`EqualWeight_w_Cash` with the turbulence gate."
 
-**Option B — Attack the detection-capacity question**. Run candidate
-mechanism #1 from section 6 (`alpha_signal` as the only per-asset
-feature) on the IC=0.40 synthetic data. If recovered IR moves from
-~0 to materially positive, the pipeline can extract signal when given
-attention; the remaining question becomes feature saliency under the
-27-dimensional state vector. ~30 minutes of compute.
+**Option B — Attack the detection-capacity question** (the cheap
+mechanism test). Run candidate mechanism #1 from section 6 (`alpha_signal`
+as the ONLY per-asset feature in the state) on the IC=0.40 synthetic
+data. If recovered IR moves from ~0 to materially positive, the pipeline
+can extract signal when given attention; the binding constraint is
+feature saliency in the 27-dimensional state vector. ~30 minutes of
+compute. Converts the under-caveated "no detection observed" into a
+concrete mechanism with a clean fix path.
 
-**Option C — Both, in sequence**. Run B as one targeted experiment,
-then write up A either way. The combined deliverable has both the
-methodology paper and a concrete diagnostic that suggests the binding
-constraint for future signal-extraction work.
+**Option C — Both, B first (RECOMMENDED, per analyst's endorsement)**.
+Run B as one targeted experiment, then write up A either way. The
+combined deliverable has the methodology paper AND a concrete
+diagnostic that identifies (or rules out) feature saliency as the
+binding constraint for future signal-extraction work.
 
 The corrected triage is now closed with a defensible result. The
 pipeline-pathology rabbit hole was a false trail caught by the
-pre-registered placebo and the analyst's cash-drag observation — exactly
-what a calibrated evaluation infrastructure is supposed to do.
+pre-registered placebo and the analyst's cash-drag observation —
+exactly what a calibrated evaluation infrastructure is supposed to do.

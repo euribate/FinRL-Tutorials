@@ -292,11 +292,11 @@ add_table(doc,
     headers=["Phase", "Setup", "Ensemble IR vs EW_w_Cash", "t_NW (p_NW)",
              "Per-seed signs (+/-)"],
     rows=[
-        ["Phase 1", "Daily cadence, 5 seeds",                     "+0.323", "+0.92 (0.359)", "3 / 2"],
-        ["Phase 4", "Weekly cadence, 5 seeds",                    "+0.517", "+1.29 (0.196)", "3 / 2"],
-        ["Phase 3 placebo", "Synthetic IC = 0, 2 seeds",          "+0.367", "+0.92 (0.359)", "1 / 1"],
+        ["Phase 1", "Daily cadence, 5 seeds",                     "+0.323", "+0.918 (0.359)", "3 / 2"],
+        ["Phase 4", "Weekly cadence, 5 seeds",                    "+0.517", "+1.292 (0.196)", "3 / 2"],
+        ["Phase 3 placebo", "Synthetic IC = 0, 2 seeds",          "+0.367", "+0.917 (0.359)", "1 / 1"],
         ["Phase 3 IC = 0.40", "Synthetic realised IC = 0.37 at rebalance days, 2 seeds",
-         "-0.214", "-0.54 (0.590)", "0 / 2"],
+         "-0.214", "-0.539 (0.590)", "0 / 2"],
         ["3a theoretical at IC = 0.20",
          "Perfect-info weekly, Monte Carlo",
          "+10.27 (median)", "N/A", "N/A"],
@@ -304,6 +304,15 @@ add_table(doc,
          "Perfect-info weekly, Monte Carlo",
          "+21.17 (median)", "N/A", "N/A"],
     ])
+
+add_para(doc,
+    "Note on the t_NW values for Phase 1 and the placebo. Both round to "
+    "0.92 at two-decimal display precision (Phase 1 = 0.9179, placebo = "
+    "0.9167). This is a numerical coincidence, not a transcription "
+    "error: the IRs (+0.323 vs +0.367) and TEs (4.55 vs 1.71 bps/day) "
+    "differ materially, with the Newey-West standard errors landing at "
+    "proportionally different values that produce nearly identical "
+    "t-statistics. The p-values agree to three decimals as a knock-on.")
 
 
 # 5. Cash-drag decomposition
@@ -337,6 +346,16 @@ add_para(doc,
     "files: Phase 1 = 6.64%, Phase 4 = 6.40%, placebo = 7.34%, IC=0.40 "
     "= 6.60%. All clustered near 7%, consistent with the structural "
     "drag mechanism.")
+
+add_para(doc,
+    "Phase 4's drag delta of negative 1.484 is larger than the "
+    "zero-skill EW_w_Cash reference of negative 1.103. The excess of "
+    "approximately negative 0.38 IR is not cash drag — it is the "
+    "transaction-cost plus variance drag induced by the policy's tilts. "
+    "PPO's tilted positions have higher concentration than 1/(M+1) "
+    "and pay turnover cost on each rebalance day; both effects compound "
+    "to a small additional negative IR vs cash-free EW that EW_w_Cash "
+    "does not pay.")
 
 
 # 6. Per-seed dispersion
@@ -443,21 +462,40 @@ add_para(doc,
     "both placebo and strong-signal data.")
 
 add_para(doc,
-    "Third, the real-data results (Phase 1 and Phase 4) sit within "
-    "the placebo's noise band. With the corrected benchmark, Phase 1 IR "
-    "is plus 0.32 and Phase 4 IR is plus 0.52 — both indistinguishable "
-    "from zero (p > 0.19). Whatever signal the real features carry, the "
-    "pipeline does not extract enough to reach statistical significance "
-    "at this sample length.")
+    "Caveat on this finding: it rests on two seeds of a single "
+    "block-bootstrap draw. It is directionally credible — a "
+    "perfect-info ceiling of approximately plus 20 IR missed entirely "
+    "down to approximately zero is hard to explain by seed luck alone "
+    "or by bootstrap-draw-specific structure — but a fully powered "
+    "claim would need a second bootstrap draw and a larger seed pool. "
+    "Option B in section 9 (alpha_signal as the only per-asset feature, "
+    "approximately 30 minutes of compute) is precisely the cheap test "
+    "that converts 'no detection observed' into a concrete mechanism: "
+    "feature saliency loss in the 27-dimensional state vector.")
+
+add_para(doc,
+    "Third, the real-data results (Phase 1 and Phase 4) DO NOT bound "
+    "the IC content of the real features. This is the subtle but "
+    "important point. Phase 1 IR is plus 0.32 and Phase 4 IR is plus "
+    "0.52, both indistinguishable from zero — but the IC = 0.40 result "
+    "establishes that this pipeline produces approximately the same "
+    "null distribution whether the data carries planted IC = 0 or "
+    "planted IC = 0.37. Real features could carry IC = 0.5 and this "
+    "pipeline would still report IR approximately zero. The defensible "
+    "claim is about the apparatus, not the features: this pipeline "
+    "extracts no alpha from these features on the tested arms, and its "
+    "demonstrated detection capacity is below realised IC approximately "
+    "0.37; real-feature IC content remains UNMEASURED by this design.")
 
 add_para(doc,
     "Fourth, the deployable answer is EqualWeight_w_Cash with the "
     "turbulence gate. Annualised Sharpe 1.103, cumulative return 72.60 "
     "percent, maximum drawdown negative 14.97 percent. PPO does not "
     "materially differ from it under any tested configuration. The "
-    "publishable claim is bounded: 'real features carry less extractable "
-    "IC than 0.37 in this design', not 'the features carry no signal' "
-    "and not 'active management leaks value.'")
+    "publishable negative claim is bounded — 'this pipeline does not "
+    "extract alpha from these features and its detection capacity is "
+    "below realised IC approximately 0.37' — and notably does NOT say "
+    "'the features carry no signal' or 'active management leaks value.'")
 
 
 # 9. Recommended next move
@@ -473,11 +511,12 @@ add_table(doc,
         ["A. Ship the methodology paper.",
          "Writeup only",
          "Frame as: 'leak-free pipeline + properly powered placebo + "
-         "cash-drag-corrected benchmark show no demonstrated alpha "
-         "extraction at realised IC up to 0.37 from this PPO + "
-         "article_benchmark + IR-sel pipeline on a 13-ETF universe. "
-         "The deployable strategy is EqualWeight_w_Cash with the "
-         "turbulence gate.'"],
+         "cash-drag-corrected benchmark show this PPO + article_benchmark "
+         "+ IR-sel pipeline does NOT extract alpha from a 13-ETF universe "
+         "AND has demonstrated detection capacity below realised IC "
+         "approximately 0.37 (subject to a 2-seed-1-bootstrap caveat). "
+         "Real-feature IC content is therefore unmeasured. The deployable "
+         "strategy is EqualWeight_w_Cash with the turbulence gate.'"],
 
         ["B. Single targeted follow-up: train an IC = 0.40 arm where "
          "alpha_signal is the ONLY per-asset feature in the state.",
@@ -487,13 +526,15 @@ add_table(doc,
          "approximately 0 to materially positive, the encoder cannot "
          "attend to alpha_signal among the other 26 features. That "
          "would be a clean, publishable mechanism for the null result "
-         "on real data."],
+         "on real data, and converts the under-caveated detection-"
+         "failure conclusion into a concrete cause with a fix path."],
 
-        ["C. Both, in sequence (recommended).",
+        ["C. Both, B FIRST (RECOMMENDED, per analyst endorsement).",
          "Option B first, then Option A",
-         "Combined deliverable: methodology paper + one concrete "
-         "diagnostic that identifies the binding constraint for future "
-         "signal-extraction work."],
+         "Combined deliverable: methodology paper plus one concrete "
+         "diagnostic that identifies (or rules out) feature saliency as "
+         "the binding constraint for future signal-extraction work. "
+         "The analyst explicitly endorsed this option order."],
     ])
 
 
